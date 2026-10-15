@@ -150,6 +150,9 @@ unsafe fn paint(hwnd: HWND) {
     };
     SetBkMode(hdc, TRANSPARENT as i32);
     let draw = |text: &str, top: f32, height: f32, f: HFONT, color: u32| {
+        if text.is_empty() {
+            return;
+        }
         let old = SelectObject(hdc, f);
         SetTextColor(hdc, color);
         let mut r = RECT { left: px(20.0), top: px(top), right: rc.right - px(20.0), bottom: px(top + height) };
