@@ -1,0 +1,7 @@
+/target/
+/dist/
+/samples/*.wav
+!/samples/README.md
+/repo.zip
+*.part
+/bench-results/
