@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Third-party actions are pinned to full commit SHAs (tag in the comment) so a
+# moved tag cannot change what runs with this repository's token. The Rust
+# toolchain comes from the runner's preinstalled rustup, not a third-party
+# action, at the version pinned in rust-toolchain.toml.
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain (pinned in rust-toolchain.toml)
+        shell: pwsh
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel = "(.+)"').Matches[0].Groups[1].Value
+          rustup toolchain install $channel --profile minimal -c clippy -c rustfmt
+          rustc --version
+          cargo --version
+          cmake --version
+          # whisper-rs-sys runs bindgen, which needs libclang (LLVM).
+          if (Test-Path "$env:ProgramFiles\LLVM\bin\libclang.dll") { "libclang: $env:ProgramFiles\LLVM\bin" } else { Write-Warning 'libclang.dll not found under Program Files\LLVM' }
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy (with whisper.cpp)
+        run: cargo clippy --all-targets --locked -- -D warnings
+      # Builds release, runs the tests, downloads and verifies ONNX Runtime 1.31.0,
+      # copies the VC++ runtime, packages dist\SwiftVoice and smoke-tests the
+      # packaged swiftvoice.exe / swiftvoice.com (ONNX Runtime loads, telemetry off).
+      - name: Build, test and package
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - name: Package summary
+        shell: pwsh
+        run: |
+          $pkg = 'dist/SwiftVoice'
+          $mb = [math]::Round(((Get-ChildItem -Recurse -File $pkg | Measure-Object -Sum Length).Sum) / 1MB, 1)
+          $zip = Get-ChildItem dist/*.zip | Select-Object -First 1
+          "### SwiftVoice package" >> $env:GITHUB_STEP_SUMMARY
+          "Installed size: $mb MB (models not included)" >> $env:GITHUB_STEP_SUMMARY
+          "Archive: $($zip.Name), $([math]::Round($zip.Length / 1MB, 1)) MB, SHA-256 $((Get-FileHash $zip -Algorithm SHA256).Hash)" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem $pkg -File | Sort-Object Length -Descending | ForEach-Object { "- $($_.Name): $($_.Length) bytes" } >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SwiftVoice-win-x64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    # The platform-independent core (audio pipeline, segmenter, recogniser
+    # front end, post-processing, controller, insertion strategy) on Linux,
+    # plus a cross-check of the Windows code without the whisper.cpp build.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain (pinned in rust-toolchain.toml)
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal -c clippy -c rustfmt -t x86_64-pc-windows-msvc
+          rustc --version
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked --no-default-features -- -D warnings
+      - run: cargo test --locked --no-default-features
+      - name: Windows target check (no whisper.cpp)
+        run: cargo clippy --all-targets --locked --no-default-features --target x86_64-pc-windows-msvc -- -D warnings
