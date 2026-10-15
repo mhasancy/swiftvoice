@@ -303,7 +303,8 @@ unsafe fn paint(hwnd: HWND) {
         let (cx, cy) = (w / 2, h / 2);
         // Insertion confirmation: the dot flashes green, then the hide
         // timer makes it disappear.
-        let color = if matches!(&view, OverlayView::Result { tone: Tone::Success, .. }) { rgb(0x3D, 0xD6, 0x8C) } else { rgb(0xFF, 0x45, 0x3A) };
+        let color =
+            if matches!(&view, OverlayView::Result { tone: Tone::Success, .. }) { rgb(0x3D, 0xD6, 0x8C) } else { rgb(0xFF, 0x45, 0x3A) };
         let dot = CreateSolidBrush(color);
         let old_brush = SelectObject(mem, dot);
         let old_pen = SelectObject(mem, GetStockObject(NULL_PEN));

@@ -422,8 +422,16 @@ pub fn run(args: &BenchArgs, config: &Config) -> Result<BenchReport> {
     }
     let vad_name = vad.name().to_string();
     let v = &config.vad;
-    let toggle_cfg =
-        SegmenterConfig::from_ms(v.threshold, v.pause_ms, (v.endpoint_ms > 0).then_some(v.endpoint_ms), v.pre_roll_ms, commit_after_secs, None, None, None);
+    let toggle_cfg = SegmenterConfig::from_ms(
+        v.threshold,
+        v.pause_ms,
+        (v.endpoint_ms > 0).then_some(v.endpoint_ms),
+        v.pre_roll_ms,
+        commit_after_secs,
+        None,
+        None,
+        None,
+    );
     // Recordings often stop right after the last word; append silence so the
     // endpoint (toggle) and the key release (push-to-talk) happen after the
     // speech, as they would live.

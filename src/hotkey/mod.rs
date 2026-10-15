@@ -206,7 +206,8 @@ impl Hotkey {
         if self.mods.any() {
             return Ok(());
         }
-        let ok_bare = matches!(self.vk, 0x70..=0x87 | 0x13 | 0x91 | 0x2C | vk::LMENU | vk::RMENU) || (allow_bare_escape && self.vk == vk::ESCAPE);
+        let ok_bare =
+            matches!(self.vk, 0x70..=0x87 | 0x13 | 0x91 | 0x2C | vk::LMENU | vk::RMENU) || (allow_bare_escape && self.vk == vk::ESCAPE);
         if ok_bare {
             Ok(())
         } else {
