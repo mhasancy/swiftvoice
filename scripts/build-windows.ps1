@@ -309,3 +309,8 @@ if ($installMB -gt $MaxInstallMB) {
     Write-Warning "Installed size $installMB MB exceeds the $MaxInstallMB MB target (docs/BENCHMARKS.md)."
 }
 Write-Host "`nFirst run: $pkg\swiftvoice.exe (tray icon), or: swiftvoice models download parakeet-tdt-0.6b-v3 silero-vad"
+
+# Explicit success: a caller that propagates $LASTEXITCODE (GitHub Actions' pwsh
+# steps do) would otherwise see the last native command's code, here the
+# --doctor smoke test, which exits 1 when no models are installed.
+exit 0

@@ -131,3 +131,6 @@ $code = Invoke-Native $Exe $arguments "$base.txt"
 if ($code -ne 0) { Fail "benchmark failed (exit code $code); see the messages above" }
 Write-Host "`nSaved: $base.txt and $base.json"
 Write-Host 'Targets and how to read the numbers: docs\BENCHMARKS.md'
+
+# Explicit success (see the end of build-windows.ps1).
+exit 0
