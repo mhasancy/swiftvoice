@@ -70,10 +70,12 @@ Nothing is installed system wide. To remove SwiftVoice, quit it and delete the f
 
 Requirements:
 - Windows 10/11 x64.
-- Rust 1.92 or newer (`rustup`, MSVC toolchain).
+- Rust via `rustup`, with the MSVC toolchain. `rust-toolchain.toml` pins the exact version (1.99.0), and rustup installs it on first build. The minimum supported version is 1.92.
 - Visual Studio 2022 or newer, or Build Tools, with *Desktop development
   with C++*.
-- For the Whisper fallback: *C++ CMake tools for Windows*, or CMake on PATH.
+- For the Whisper fallback:
+  - *C++ CMake tools for Windows*, or CMake on PATH;
+  - libclang, to generate the whisper.cpp bindings: LLVM (`winget install LLVM.LLVM`), or *C++ Clang Compiler for Windows* in the Visual Studio Installer.
 
 ```powershell
 git clone <this repository>; cd swiftvoice
@@ -89,7 +91,7 @@ The script:
 - smoke-tests the packaged exe;
 - writes `dist\SwiftVoice-<version>-win-x64.zip`.
 
-Options: `-NoWhisper` (no CMake needed, no Whisper fallback), `-SkipTests`,
+Options: `-NoWhisper` (no CMake or LLVM needed, no Whisper fallback), `-SkipTests`,
 `-Portable` (settings and models next to the exe), `-OrtZip <file>`
 (offline build).
 

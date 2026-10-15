@@ -1,0 +1,8 @@
+# Pinned so local builds and CI use the same compiler and the same clippy
+# lints (a newer stable can add lints that fail `-D warnings`). rustup
+# installs this toolchain automatically; the minimum supported Rust is
+# `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

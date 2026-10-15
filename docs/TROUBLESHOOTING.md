@@ -26,6 +26,13 @@ removed from the folder. Restore them from the zip, or install the latest
 Visual C++ Redistributable (x64) from
 `https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`.
 
+**Build: "libclang.dll (LLVM) is needed to build the whisper.cpp fallback".**
+The Whisper fallback's Rust bindings are generated at build time, which
+needs libclang. Install LLVM (`winget install LLVM.LLVM`) or *C++ Clang
+Compiler for Windows* in the Visual Studio Installer. Alternatively, set
+`LIBCLANG_PATH` to the folder that contains `libclang.dll`, or build
+without the fallback: `scripts\build-windows.ps1 -NoWhisper`.
+
 **Windows SmartScreen: "Windows protected your PC".** Your own build is not
 code-signed. Click *More info > Run anyway*, or sign the exe with your
 certificate.

@@ -1,7 +1,7 @@
 [env]
-# whisper-rs-sys: use the bindings bundled with the crate instead of running
-# bindgen at build time, so building does not require libclang.
-WHISPER_DONT_GENERATE_BINDINGS = "1"
 # ONNX Runtime telemetry off for `cargo run` / `cargo test` processes too
 # (the app itself sets this at startup; see src/asr/runtime.rs).
 ORT_DISABLE_TELEMETRY = "1"
+# whisper-rs-sys generates its bindings with bindgen (libclang) for the
+# actual target. Do not set WHISPER_DONT_GENERATE_BINDINGS: the bindings
+# bundled with the crate are for Linux glibc and fail to compile for MSVC.

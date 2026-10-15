@@ -4,9 +4,9 @@
     Build, test and package SwiftVoice for Windows x64.
 
 .DESCRIPTION
-    1. Checks the toolchain: Rust >= 1.92 with the MSVC target, and CMake for
-       the whisper.cpp fallback (the Visual Studio-bundled CMake is used
-       when cmake is not on PATH).
+    1. Checks the toolchain: Rust >= 1.92 with the MSVC target, and CMake plus
+       libclang (LLVM) for the whisper.cpp fallback (the Visual Studio-bundled
+       CMake and Clang are used when no standalone install is found).
     2. cargo build --release --locked, and cargo test unless -SkipTests.
     3. Downloads Microsoft's official ONNX Runtime 1.31.0 CPU build from
        GitHub releases (or uses -OrtZip), verifies its SHA-256, and extracts
@@ -19,8 +19,8 @@
        and prints sizes and SHA-256.
 
 .PARAMETER NoWhisper
-    Build without the whisper.cpp fallback (no CMake needed; Bengali and
-    other non-Parakeet languages are then unavailable).
+    Build without the whisper.cpp fallback (no CMake or LLVM needed; Bengali
+    and other non-Parakeet languages are then unavailable).
 
 .PARAMETER SkipTests
     Do not run cargo test.
@@ -131,6 +131,20 @@ if (-not $NoWhisper) {
     } else {
         Write-Host "    CMake: $((Get-Command cmake).Source)"
     }
+    # whisper-rs-sys generates its Rust bindings with bindgen, which needs
+    # libclang.dll. clang-sys finds it in LIBCLANG_PATH, an LLVM install under
+    # Program Files, or Visual Studio's bundled Clang; check those up front.
+    $clangDirs = @()
+    if ($env:LIBCLANG_PATH) { $clangDirs += $env:LIBCLANG_PATH }
+    if ($env:ProgramFiles) { $clangDirs += (Join-Path $env:ProgramFiles 'LLVM\bin') }
+    # Visual Studio's x64 Clang (bindgen runs as a 64-bit process; VC\Tools\Llvm\bin is 32-bit).
+    $clangDirs += (Join-Path $vs 'VC\Tools\Llvm\x64\bin')
+    $libclang = $clangDirs | Where-Object { $_ -and (Test-Path (Join-Path $_ 'libclang.dll')) } | Select-Object -First 1
+    if (-not $libclang) {
+        Fail 'libclang.dll (LLVM) is needed to build the whisper.cpp fallback (bindgen). Install LLVM (winget install LLVM.LLVM) or "C++ Clang Compiler for Windows" in the Visual Studio Installer, set LIBCLANG_PATH to the folder that contains libclang.dll, or build without the fallback: -NoWhisper'
+    }
+    $env:LIBCLANG_PATH = $libclang
+    Write-Host "    libclang: $libclang"
 }
 
 # --- 2. Build and test ----------------------------------------------------
