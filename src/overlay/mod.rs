@@ -45,6 +45,11 @@ impl OverlayView {
     pub fn is_hidden(&self) -> bool {
         matches!(self, OverlayView::Hidden)
     }
+
+    /// Drawn as the bare dot indicator rather than a status card.
+    pub fn is_dot(&self) -> bool {
+        matches!(self, OverlayView::Listening { .. } | OverlayView::Processing { .. })
+    }
 }
 
 /// Keep the overlay text short: the last `max` characters, cut at a word.
