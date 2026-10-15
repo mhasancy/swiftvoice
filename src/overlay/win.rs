@@ -236,6 +236,9 @@ unsafe fn font(height: i32, weight: u32) -> HFONT {
 }
 
 unsafe fn draw_text(hdc: HDC, text: &str, rect: &mut RECT) {
+    if text.is_empty() {
+        return;
+    }
     let w: Vec<u16> = text.encode_utf16().collect();
     DrawTextW(hdc, w.as_ptr(), w.len() as i32, rect, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
