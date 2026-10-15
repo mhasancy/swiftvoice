@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 
 # Before importing onnxruntime: Microsoft's non-Windows builds otherwise start
-# a telemetry uploader (see swiftvoice/src/asr/runtime.rs).
+# a telemetry uploader (see src/asr/runtime.rs).
 os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
 
 import numpy as np  # noqa: E402

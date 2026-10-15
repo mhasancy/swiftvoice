@@ -78,7 +78,7 @@ Requirements:
   - libclang, to generate the whisper.cpp bindings: LLVM (`winget install LLVM.LLVM`), or *C++ Clang Compiler for Windows* in the Visual Studio Installer.
 
 ```powershell
-git clone <this repository>; cd swiftvoice
+git clone https://github.com/mhasancy/swiftvoice; cd swiftvoice
 powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1   # build, test, package
 dist\SwiftVoice\swiftvoice.exe
 ```
@@ -198,7 +198,8 @@ The report covers:
   inference times.
 
 Add `--json out.json` for machine-readable results. Targets, method and
-measured results: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+measured results: [docs/BENCHMARKS.md](docs/BENCHMARKS.md). The record of
+every verification run is in [docs/TESTING_EVIDENCE.md](docs/TESTING_EVIDENCE.md).
 
 ## Privacy
 
