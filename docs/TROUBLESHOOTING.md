@@ -65,6 +65,8 @@ a global hotkey.
 **AltGr / international keyboards.** Ctrl+Alt is the same as AltGr on many
 layouts, so Ctrl+Alt+V may clash with typing a character. Choose a shortcut
 with Win or Shift, or a bare F13-F24 key, for example on a macro keyboard.
+A lone Right Alt shortcut (`toggle = "RAlt"`) takes the key over
+system-wide too, so AltGr combinations stop working while SwiftVoice runs.
 
 **Push-to-talk inserts nothing after short taps.** Holds shorter than
 `hotkeys.min_hold_ms` (180 ms) are ignored on purpose.
@@ -88,7 +90,8 @@ device disappears, SwiftVoice falls back to the default and says so.
 
 **Words cut off at the start.** Raise `vad.pre_roll_ms` (default 300), or
 lower `vad.threshold` (default 0.5) for quiet voices. Words cut off at the
-end in toggle mode: raise `vad.endpoint_ms`.
+end in toggle mode: raise `vad.endpoint_ms` (or set it to 0 to stop only
+with the toggle key).
 
 **False starts from background noise.** Turn on *Noise suppression*, raise
 `vad.threshold` to 0.6-0.7, or use push-to-talk.

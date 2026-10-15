@@ -127,12 +127,16 @@ catalogue.
 | Action | Default |
 |---|---|
 | Dictate while holding | **Ctrl+Alt+Space** (push-to-talk) |
-| Start/stop listening | **Ctrl+Alt+V** (toggle; stops by itself 0.8 s after you finish) |
+| Start/stop listening | **Ctrl+Alt+V** (toggle; stops 0.8 s after you finish, or set `vad.endpoint_ms = 0` and press again to stop) |
 | Cancel while listening | **Escape** |
 | Change hotkeys | tray > *Hotkeys > Change push-to-talk…* (press the new keys) |
 
+A modifier key can also be used alone: with `toggle = "RAlt"`, one press of
+Right Alt starts dictation and the next press stops it.
+
 While you dictate, a red dot at the middle-left of the screen shows the
-input level — no text, no frame. Short results and errors appear as a small
+input level — no text, no frame. When the text has been inserted the dot
+flashes green and disappears. Short messages and errors appear as a small
 overlay near the bottom. It never takes focus. The tray menu provides:
 - start/stop;
 - hotkey changes;

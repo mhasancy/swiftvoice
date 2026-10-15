@@ -32,7 +32,7 @@ use crate::audio::{self, AudioCmd, AudioHandle};
 use crate::config::{Config, HotkeyConfig, OverlayConfig};
 use crate::controller::{Controller, Ports, Ui};
 use crate::events::{AppEvent, DownloadEvent, HotkeyKind, TrayCommand};
-use crate::hotkey::win::{HotkeyRegistry, TIMER_PTT_POLL};
+use crate::hotkey::win::{HotkeyRegistry, TIMER_PTT_POLL, WM_SV_HOTKEY};
 use crate::insertion::win::{WinClipboard, WinDesktop};
 use crate::insertion::{self, InsertRequest, Inserter, InserterHandle, WindowHandle};
 use crate::overlay::win::Overlay;
@@ -411,6 +411,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 // Busy in a nested loop: try again shortly.
                 None => {
                     PostMessageW(hwnd, WM_HOTKEY, wparam, lparam);
+                }
+            }
+            0
+        }
+        // Modifier-only shortcuts (RAlt/LAlt) arrive from the keyboard hook.
+        WM_SV_HOTKEY => {
+            match with_app(|a| a.controller.ui.hotkeys.on_hotkey(wparam as i32)) {
+                Some(Some(ev)) => dispatch(AppEvent::Hotkey(ev)),
+                Some(None) => {}
+                None => {
+                    PostMessageW(hwnd, WM_SV_HOTKEY, wparam, lparam);
                 }
             }
             0

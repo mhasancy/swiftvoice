@@ -367,7 +367,7 @@ impl<U: Ui, P: Ports> Controller<U, P> {
             SessionMode::Toggle { continuous } => SegmenterConfig::from_ms(
                 v.threshold,
                 v.pause_ms,
-                Some(v.endpoint_ms),
+                (v.endpoint_ms > 0).then_some(v.endpoint_ms),
                 v.pre_roll_ms,
                 self.cfg.asr.commit_after_secs,
                 partials.then_some(self.cfg.asr.partial_interval_ms),

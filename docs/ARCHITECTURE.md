@@ -232,7 +232,7 @@ The default `method = "auto"`:
 | `asr/` | ONNX Runtime loading, NeMo features, Parakeet TDT, NeMo CTC, Whisper, worker, catalogue, downloader |
 | `postprocess/` | tokenisation, vocabulary and voice commands, Clean rules, Smart (loopback LLM) |
 | `insertion/` | strategy and clipboard restore logic (`mod.rs`, `clipboard.rs`, tested with fakes) and the Win32 backend (`win.rs`) |
-| `hotkey/` | hotkey parsing/validation, registration and push-to-talk polling, the capture dialog |
+| `hotkey/` | hotkey parsing/validation, registration, push-to-talk polling, the low-level hook for modifier-only keys, the capture dialog |
 | `tray/`, `overlay/` | menu model and procedural icons; the Win32 tray icon and the layered overlay |
 | `config/` | typed settings with validation, the commented template, comment-preserving edits |
 | `benchmark.rs`, `memory.rs`, `logging.rs`, `paths.rs` | benchmark and latency simulation; RSS; file logger; folder layout |
