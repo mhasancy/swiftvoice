@@ -83,6 +83,8 @@ const NAMED_KEYS: &[(&str, &[&str], u16)] = &[
     ("PrintScreen", &["prtsc", "printscr", "snapshot"], 0x2C),
     ("NumLock", &[], 0x90),
     ("Apps", &["menukey", "contextmenu"], 0x5D),
+    ("LAlt", &["leftalt", "leftmenu"], 0xA4),
+    ("RAlt", &["rightalt", "rightmenu"], 0xA5),
     ("NumpadMultiply", &["multiply"], 0x6A),
     ("NumpadAdd", &["add"], 0x6B),
     ("NumpadSubtract", &["subtract"], 0x6D),
@@ -204,14 +206,20 @@ impl Hotkey {
         if self.mods.any() {
             return Ok(());
         }
-        let ok_bare = matches!(self.vk, 0x70..=0x87 | 0x13 | 0x91 | 0x2C) || (allow_bare_escape && self.vk == vk::ESCAPE);
+        let ok_bare = matches!(self.vk, 0x70..=0x87 | 0x13 | 0x91 | 0x2C | vk::LMENU | vk::RMENU) || (allow_bare_escape && self.vk == vk::ESCAPE);
         if ok_bare {
             Ok(())
         } else {
             Err(format!(
-                "\"{self}\" without Ctrl, Alt, Shift or Win would block that key in every app; add a modifier or use F13-F24, Pause or Scroll Lock"
+                "\"{self}\" without Ctrl, Alt, Shift or Win would block that key in every app; add a modifier or use F13-F24, Pause, Scroll Lock or RAlt"
             ))
         }
+    }
+
+    /// True for keys that Windows accepts in `RegisterHotKey` but never
+    /// fires; the registry serves these with a low-level keyboard hook.
+    pub fn needs_keyboard_hook(&self) -> bool {
+        matches!(self.vk, vk::LMENU | vk::RMENU)
     }
 }
 
@@ -302,6 +310,20 @@ mod tests {
         assert!(Hotkey::parse("Escape").unwrap().check_global(false).is_err());
         assert!(Hotkey::parse("Escape").unwrap().check_global(true).is_ok());
         assert!(Hotkey::parse("Win+H").unwrap().check_global(false).is_ok());
+    }
+
+    #[test]
+    fn lone_alt_keys_are_valid_shortcuts() {
+        let ralt = Hotkey::parse("RAlt").unwrap();
+        assert_eq!(ralt.vk, vk::RMENU);
+        assert_eq!(ralt.mods.register_flags(), 0);
+        assert_eq!(ralt.to_string(), "RAlt");
+        assert!(ralt.check_global(false).is_ok());
+        assert!(ralt.needs_keyboard_hook());
+        assert_eq!(Hotkey::parse("rightalt").unwrap(), ralt);
+        assert_eq!(Hotkey::parse("LAlt").unwrap().vk, vk::LMENU);
+        assert!(Hotkey::parse("Ctrl+RAlt").unwrap().needs_keyboard_hook());
+        assert!(!Hotkey::parse("F13").unwrap().needs_keyboard_hook());
     }
 
     #[test]

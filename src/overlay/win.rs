@@ -1,6 +1,7 @@
 //! Win32 overlay window. While you dictate it is a single red dot at the
-//! middle-left of the monitor you are working on; results and messages show
-//! as a small, translucent, rounded status pill near the bottom (or top).
+//! middle-left of the monitor you are working on; an insertion flashes that
+//! dot green, and other results and messages show as a small, translucent,
+//! rounded status pill near the bottom (or top).
 //!
 //! It is created with WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW
 //! and shown with SW_SHOWNOACTIVATE, so it never takes focus, never receives
@@ -300,7 +301,10 @@ unsafe fn paint(hwnd: HWND) {
         DeleteObject(bg);
         let r = px(7.0 + 6.0 * level.clamp(0.0, 1.0));
         let (cx, cy) = (w / 2, h / 2);
-        let dot = CreateSolidBrush(rgb(0xFF, 0x45, 0x3A));
+        // Insertion confirmation: the dot flashes green, then the hide
+        // timer makes it disappear.
+        let color = if matches!(&view, OverlayView::Result { tone: Tone::Success, .. }) { rgb(0x3D, 0xD6, 0x8C) } else { rgb(0xFF, 0x45, 0x3A) };
+        let dot = CreateSolidBrush(color);
         let old_brush = SelectObject(mem, dot);
         let old_pen = SelectObject(mem, GetStockObject(NULL_PEN));
         Ellipse(mem, cx - r, cy - r, cx + r + 1, cy + r + 1);

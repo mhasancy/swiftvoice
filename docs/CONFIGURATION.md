@@ -36,6 +36,8 @@ state, models and microphones.
 ## [hotkeys]
 
 Format: modifiers `Ctrl`, `Alt`, `Shift`, `Win` joined with `+`, then one key.
+- **Modifier keys:** `RAlt`, `LAlt`; either may also be used alone as the key
+  (for example `toggle = "RAlt"`: press to start, press again to stop).
 - **Letters and digits:** `A`-`Z`, `0`-`9`.
 - **Function keys:** `F1`-`F24`.
 - **Navigation and editing:** `Space`, `Enter`, `Tab`, `Escape`,
@@ -47,21 +49,24 @@ Format: modifiers `Ctrl`, `Alt`, `Shift`, `Win` joined with `+`, then one key.
   `NumpadMultiply`, `NumpadDivide`, `NumpadDecimal`.
 - **Punctuation keys:** `;` `=` `,` `-` `.` `/` `` ` `` `[` `\` `]` `'`.
 
-A key without a modifier is only allowed for F1-F24, Pause, Scroll Lock and
-Print Screen. Any other bare key would be blocked in every application.
-Empty string = shortcut off.
+A key without a modifier is only allowed for F1-F24, Pause, Scroll Lock,
+Print Screen, RAlt and LAlt. Any other bare key would be blocked in every
+application. RAlt/LAlt are watched with a low-level keyboard hook: the key
+is captured before any application sees it, and on layouts where Right Alt
+doubles as AltGr the AltGr combinations stop working. Empty string =
+shortcut off.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `push_to_talk` | `"Ctrl+Alt+Space"` | hold to dictate, release to insert |
-| `toggle` | `"Ctrl+Alt+V"` | press, speak, stop talking: the text is inserted at the endpoint; press again to stop early |
+| `toggle` | `"Ctrl+Alt+V"` | press to start; a pause inserts the text (`endpoint_ms`); press again to stop — with `endpoint_ms = 0` only the key stops it |
 | `cancel` | `"Escape"` | discard the current dictation; registered only while listening |
 | `min_hold_ms` | `180` | shorter push-to-talk taps are ignored |
 | `release_tail_ms` | `150` | if you release mid-word, recording continues this long |
 
 Change hotkeys from the tray menu: *Hotkeys > Change push-to-talk…*, then
-press the new combination. The new shortcut is checked against other
-programs before it is saved.
+press the new combination (Right Alt alone is accepted too). The new
+shortcut is checked against other programs before it is saved.
 
 ## [audio]
 
@@ -79,7 +84,7 @@ programs before it is saved.
 | `engine` | `"silero"` | silero, energy | Silero VAD (needs the `silero-vad` model, 2.3 MB) or an energy detector |
 | `threshold` | `0.5` | 0.1 … 0.95 | speech probability; raise it in noisy rooms |
 | `pause_ms` | `200` | 64 … 2000 | a pause this long starts early transcription and is where long dictation is committed |
-| `endpoint_ms` | `800` | 200 … 10000, ≥ `pause_ms` | toggle mode: silence that ends the utterance; lower is snappier but may cut you off |
+| `endpoint_ms` | `800` | 0, or 200 … 10000 and ≥ `pause_ms` | toggle mode: silence that ends the dictation; lower is snappier but may cut you off; 0 = never stop automatically, only the toggle key stops it |
 | `pre_roll_ms` | `300` | 0 … 2000 | audio kept from before speech onset |
 | `no_speech_timeout_ms` | `8000` | 1000 … 120000 | toggle mode gives up when nothing is said |
 | `continuous` | `false` | bool | toggle mode keeps listening after each utterance (hands-free) |
@@ -163,7 +168,9 @@ That is why Smart mode is opt-in, and why `timeout_ms` caps the wait.
 
 While you dictate, the indicator is a single red dot (no text) at the
 middle-left of the monitor that holds the focused window; its size follows
-your voice. `position` applies to the result and message cards.
+your voice. When the text has been inserted the dot flashes green for
+`hide_after_ms` and disappears — a successful insertion shows no card.
+`position` applies to the remaining result and message cards.
 
 ## Vocabulary (`vocabulary.toml`)
 

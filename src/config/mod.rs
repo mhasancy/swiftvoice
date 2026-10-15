@@ -57,7 +57,7 @@ impl Default for GeneralConfig {
 pub struct HotkeyConfig {
     /// Hold to dictate, release to insert.
     pub push_to_talk: String,
-    /// Press once to start; text is inserted when you pause (VAD endpoint).
+    /// Press once to start, press again to stop; the VAD endpoint can also insert on a pause.
     pub toggle: String,
     /// Cancels the current dictation. Registered only while listening.
     pub cancel: String,
@@ -116,7 +116,7 @@ pub struct VadConfig {
     pub threshold: f32,
     /// Silence after speech that triggers early (speculative) transcription.
     pub pause_ms: u32,
-    /// Silence that ends an utterance in toggle mode.
+    /// Silence that ends a dictation in toggle mode; 0 = only the toggle key stops it.
     pub endpoint_ms: u32,
     /// Audio kept before detected speech onset.
     pub pre_roll_ms: u32,
@@ -444,9 +444,9 @@ impl Config {
         range_u32(&mut errs, "audio.keep_warm_secs", self.audio.keep_warm_secs, 0, 3600);
         range_f32(&mut errs, "vad.threshold", self.vad.threshold, 0.1, 0.95);
         range_u32(&mut errs, "vad.pause_ms", self.vad.pause_ms, 64, 2000);
-        range_u32(&mut errs, "vad.endpoint_ms", self.vad.endpoint_ms, 200, 10_000);
-        if self.vad.endpoint_ms < self.vad.pause_ms {
-            errs.push("vad.endpoint_ms must be >= vad.pause_ms".into());
+        range_u32(&mut errs, "vad.endpoint_ms", self.vad.endpoint_ms, 0, 10_000);
+        if self.vad.endpoint_ms != 0 && self.vad.endpoint_ms < self.vad.pause_ms {
+            errs.push("vad.endpoint_ms must be >= vad.pause_ms (or 0 to stop only with the toggle key)".into());
         }
         range_u32(&mut errs, "vad.pre_roll_ms", self.vad.pre_roll_ms, 0, 2000);
         range_u32(&mut errs, "vad.no_speech_timeout_ms", self.vad.no_speech_timeout_ms, 1000, 120_000);

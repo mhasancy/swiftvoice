@@ -94,12 +94,23 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             0
         }
         WM_KEYUP | WM_SYSKEYUP => {
+            let code = wparam as u16;
+            let right_alt = code == vk::MENU && lparam & (1 << 24) != 0;
             let mods = current_mods();
-            update(hwnd, |s| {
-                if s.error.is_empty() {
-                    s.current = mods_text(mods);
-                }
-            });
+            if right_alt && !mods.ctrl && !mods.shift && !mods.win && !held(vk::LMENU) {
+                // Right Alt released on its own: it is a valid shortcut.
+                update(hwnd, |s| {
+                    if s.error.is_empty() {
+                        s.done = Some(Some(Hotkey::new(Modifiers::default(), vk::RMENU)));
+                    }
+                });
+            } else {
+                update(hwnd, |s| {
+                    if s.error.is_empty() {
+                        s.current = mods_text(mods);
+                    }
+                });
+            }
             0
         }
         // Swallow characters (no beeps) and keep Alt from opening a menu.
@@ -163,7 +174,7 @@ unsafe fn paint(hwnd: HWND) {
     let normal = font(14.0, FW_NORMAL);
     let big = font(22.0, FW_SEMIBOLD);
     draw(&format!("Press the new shortcut for {what}."), 16.0, 22.0, normal, 0x0020_2020);
-    draw("Hold Ctrl, Alt, Shift or Win and press a key. Escape cancels.", 38.0, 22.0, normal, 0x0060_6060);
+    draw("Hold Ctrl/Alt/Shift/Win + a key, or RAlt alone. Esc cancels.", 38.0, 22.0, normal, 0x0060_6060);
     draw(if current.is_empty() { "…" } else { &current }, 70.0, 34.0, big, 0x00B0_5A1E);
     if !error.is_empty() {
         draw(&error, 108.0, 44.0, normal, 0x0020_20C0);

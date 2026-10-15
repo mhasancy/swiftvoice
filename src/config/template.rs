@@ -15,9 +15,10 @@ models_dir = ""            # empty = %LOCALAPPDATA%\SwiftVoice\models
 
 [hotkeys]
 # Modifiers: Ctrl, Alt, Shift, Win. Keys: A-Z, 0-9, F1-F24, Space, Enter, Tab,
-# Escape, Insert, Delete, Home, End, PageUp, PageDown, arrows, Pause, ...
+# Escape, Insert, Delete, Home, End, PageUp, PageDown, arrows, RAlt, LAlt,
+# Pause, ...
 push_to_talk = "Ctrl+Alt+Space"   # hold to dictate, release to insert
-toggle = "Ctrl+Alt+V"             # press, speak, pause: text is inserted
+toggle = "Ctrl+Alt+V"             # press once to start, press again to stop
 cancel = "Escape"                 # only active while listening
 min_hold_ms = 180                 # shorter push-to-talk taps are ignored
 release_tail_ms = 150             # extra audio after releasing mid-word
@@ -32,7 +33,7 @@ keep_warm_secs = 15        # keep the mic open briefly for instant restarts
 engine = "silero"          # silero (neural) | energy (no model needed)
 threshold = 0.5            # speech probability, 0.1 .. 0.95
 pause_ms = 200             # pause that starts early transcription
-endpoint_ms = 800          # silence that ends an utterance (toggle mode)
+endpoint_ms = 800          # silence that ends a dictation (toggle mode); 0 = only the key stops
 pre_roll_ms = 300          # audio kept before speech onset
 no_speech_timeout_ms = 8000
 continuous = false         # toggle mode: keep listening after each utterance
