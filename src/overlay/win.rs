@@ -1,9 +1,12 @@
-//! Win32 overlay window: a small, translucent, rounded status pill near the
-//! bottom (or top) of the monitor you are working on.
+//! Win32 overlay window. While you dictate it is a single red dot at the
+//! middle-left of the monitor you are working on; results and messages show
+//! as a small, translucent, rounded status pill near the bottom (or top).
 //!
 //! It is created with WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW
 //! and shown with SW_SHOWNOACTIVATE, so it never takes focus, never receives
-//! clicks and never appears in the taskbar or Alt+Tab.
+//! clicks and never appears in the taskbar or Alt+Tab. The dot window drops
+//! its whole background out through the layered color key, leaving only the
+//! dot itself visible.
 
 use std::cell::RefCell;
 use std::ptr::{null, null_mut};
@@ -20,6 +23,9 @@ use crate::platform::wide;
 
 pub const TIMER_OVERLAY_HIDE: usize = 0x5320;
 const CLASS: &str = "SwiftVoiceOverlay";
+/// Layered color key of the dot window: pixels painted in this color become
+/// fully transparent. Only applied while the dot indicator is shown.
+const TRANSPARENT_KEY: u32 = 0;
 
 struct State {
     view: OverlayView,
@@ -41,6 +47,21 @@ pub struct Overlay {
 
 fn rgb(r: u8, g: u8, b: u8) -> u32 {
     r as u32 | (g as u32) << 8 | (b as u32) << 16
+}
+
+/// Whether the current view is drawn as the bare dot indicator.
+fn dot_mode() -> bool {
+    STATE.with(|s| s.borrow().view.is_dot())
+}
+
+/// Layered-window transparency: uniform alpha for the card; for the dot the
+/// background is keyed out, so only the dot remains visible.
+unsafe fn apply_style(hwnd: HWND, opacity: u8, dot: bool) {
+    if dot {
+        SetLayeredWindowAttributes(hwnd, TRANSPARENT_KEY, opacity, LWA_ALPHA | LWA_COLORKEY);
+    } else {
+        SetLayeredWindowAttributes(hwnd, 0, opacity, LWA_ALPHA);
+    }
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -101,7 +122,7 @@ impl Overlay {
     pub fn configure(&mut self, position: OverlayPosition, opacity: f32) {
         self.position = position;
         self.opacity = (opacity.clamp(0.3, 1.0) * 255.0) as u8;
-        unsafe { SetLayeredWindowAttributes(self.hwnd, 0, self.opacity, LWA_ALPHA) };
+        unsafe { apply_style(self.hwnd, self.opacity, dot_mode()) };
     }
 
     /// Show `view` (or hide it); `hide_after_ms` schedules an automatic hide.
@@ -145,7 +166,9 @@ impl Overlay {
         }
     }
 
-    /// Position on the monitor that holds the foreground window.
+    /// Position on the monitor that holds the foreground window: the dot at
+    /// the middle-left while dictating, the card near the bottom (or top) for
+    /// results and messages.
     unsafe fn place(&mut self) {
         let fg = GetForegroundWindow();
         let monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTOPRIMARY);
@@ -158,22 +181,34 @@ impl Overlay {
         }
         let scale = dx as f32 / 96.0;
         STATE.with(|s| s.borrow_mut().scale = scale);
-        let w = (460.0 * scale) as i32;
-        let h = (60.0 * scale) as i32;
         let work = mi.rcWork;
-        let x = work.left + ((work.right - work.left) - w) / 2;
-        let margin = (56.0 * scale) as i32;
-        let y = match self.position {
-            OverlayPosition::Bottom => work.bottom - h - margin,
-            OverlayPosition::Top => work.top + margin,
+        let dot = dot_mode();
+        let side = (44.0 * scale) as i32;
+        let w = if dot { side } else { (460.0 * scale) as i32 };
+        let h = if dot { side } else { (60.0 * scale) as i32 };
+        let (x, y) = if dot {
+            let margin = (20.0 * scale) as i32;
+            (work.left + margin, work.top + ((work.bottom - work.top) - h) / 2)
+        } else {
+            let x = work.left + ((work.right - work.left) - w) / 2;
+            let margin = (56.0 * scale) as i32;
+            let y = match self.position {
+                OverlayPosition::Bottom => work.bottom - h - margin,
+                OverlayPosition::Top => work.top + margin,
+            };
+            (x, y)
         };
         if self.size != (w, h) {
-            let radius = (22.0 * scale) as i32;
-            let rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius);
+            let rgn = if dot {
+                CreateRectRgn(0, 0, w + 1, h + 1)
+            } else {
+                let radius = (22.0 * scale) as i32;
+                CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius)
+            };
             SetWindowRgn(self.hwnd, rgn, 0);
             self.size = (w, h);
         }
-        SetLayeredWindowAttributes(self.hwnd, 0, self.opacity, LWA_ALPHA);
+        apply_style(self.hwnd, self.opacity, dot);
         SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         self.visible = true;
@@ -258,6 +293,27 @@ unsafe fn paint(hwnd: HWND) {
         (s.view.clone(), s.level, s.scale)
     });
     let px = |v: f32| (v * scale) as i32;
+    if view.is_dot() {
+        // Dot indicator: the background is keyed out, only the dot remains.
+        let bg = CreateSolidBrush(TRANSPARENT_KEY);
+        FillRect(mem, &rc, bg);
+        DeleteObject(bg);
+        let r = px(7.0 + 6.0 * level.clamp(0.0, 1.0));
+        let (cx, cy) = (w / 2, h / 2);
+        let dot = CreateSolidBrush(rgb(0xFF, 0x45, 0x3A));
+        let old_brush = SelectObject(mem, dot);
+        let old_pen = SelectObject(mem, GetStockObject(NULL_PEN));
+        Ellipse(mem, cx - r, cy - r, cx + r + 1, cy + r + 1);
+        SelectObject(mem, old_pen);
+        SelectObject(mem, old_brush);
+        DeleteObject(dot);
+        BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old_bmp);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        EndPaint(hwnd, &ps);
+        return;
+    }
     let bg = CreateSolidBrush(rgb(0x1E, 0x20, 0x24));
     FillRect(mem, &rc, bg);
     DeleteObject(bg);

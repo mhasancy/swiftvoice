@@ -36,7 +36,7 @@ timings.
 
 | # | Steps | Expected |
 |---|---|---|
-| B1 | Focus Notepad. Hold **Ctrl+Alt+Space**, say "testing one two three", release. | The overlay shows *Listening* with a level meter, then the text appears in Notepad: "Testing one two three." |
+| B1 | Focus Notepad. Hold **Ctrl+Alt+Space**, say "testing one two three", release. | A red dot appears at the middle-left of the screen (its size follows your voice), then the text appears in Notepad: "Testing one two three." |
 | B2 | Tap Ctrl+Alt+Space briefly (< 180 ms). | Nothing is inserted (accidental tap). |
 | B3 | Press **Ctrl+Alt+V**, speak a sentence, stop talking. | Text appears about 0.8 s after you stop (endpoint), listening ends. |
 | B4 | Ctrl+Alt+V, speak, press **Escape** before the endpoint. | Nothing is inserted; the overlay says "Cancelled". Escape works normally in other apps again afterwards (it is registered only while listening). |

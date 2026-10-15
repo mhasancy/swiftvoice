@@ -131,8 +131,9 @@ catalogue.
 | Cancel while listening | **Escape** |
 | Change hotkeys | tray > *Hotkeys > Change push-to-talk…* (press the new keys) |
 
-The overlay at the bottom of the screen shows the level meter and live
-text. It never takes focus. The tray menu provides:
+While you dictate, a red dot at the middle-left of the screen shows the
+input level — no text, no frame. Short results and errors appear as a small
+overlay near the bottom. It never takes focus. The tray menu provides:
 - start/stop;
 - hotkey changes;
 - microphone, gain and noise suppression;

@@ -156,10 +156,14 @@ That is why Smart mode is opt-in, and why `timeout_ms` caps the wait.
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | small click-through status window (it never takes focus) |
-| `show_partials` | `true` | show the live preview text |
+| `show_partials` | `true` | compute live partial transcripts while dictating |
 | `position` | `"bottom"` | bottom or top of the monitor that shows the focused window |
 | `opacity` | `0.94` | 0.3 … 1.0 |
 | `hide_after_ms` | `900` | 0 … 10000; how long the result stays visible |
+
+While you dictate, the indicator is a single red dot (no text) at the
+middle-left of the monitor that holds the focused window; its size follows
+your voice. `position` applies to the result and message cards.
 
 ## Vocabulary (`vocabulary.toml`)
 
