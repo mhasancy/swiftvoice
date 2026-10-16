@@ -30,13 +30,15 @@
 
 use std::sync::Arc;
 
-use super::vad::FRAME_SAMPLES;
+use super::vad::{FRAME_MS, FRAME_SAMPLES};
 
 /// Bounds of the left context after a commit (see the module docs).
 pub const CONTEXT_MIN_MS: u32 = 1000;
 pub const CONTEXT_MAX_MS: u32 = 2500;
 /// Shortest pause snapshot worth splitting at when an utterance ends.
 pub const SPLIT_MIN_MS: u32 = 2000;
+/// How far back a forced window cut looks for the quietest frame to cut at.
+pub const SEAM_LOOKBACK_MS: u32 = 2000;
 
 #[derive(Debug, Clone)]
 pub struct SegmenterConfig {
@@ -271,8 +273,10 @@ impl Segmenter {
                     self.commit(end, out);
                 }
             } else if self.window.len() >= self.cfg.max_window_frames as usize * FRAME_SAMPLES {
-                // Continuous speech without a usable pause: cut here.
-                let end = self.window.len();
+                // Continuous speech without a usable pause: cut at the
+                // quietest recent frame, not at this arbitrary (likely
+                // mid-word) one.
+                let end = self.quietest_cut();
                 self.emit_snapshot(SnapshotKind::Final, end, out);
                 self.commit(end, out);
             }
@@ -386,6 +390,27 @@ impl Segmenter {
         self.frames_since_partial = 0;
     }
 
+    /// Where a forced window cut should land: just before the quietest frame
+    /// of the last [`SEAM_LOOKBACK_MS`], so the next window starts in the
+    /// most likely word gap instead of mid-word (the recogniser can return
+    /// nothing for a clip that begins mid-word; see the context docs on
+    /// [`SegmenterConfig`]).
+    fn quietest_cut(&self) -> usize {
+        let frames_back = SEAM_LOOKBACK_MS.div_ceil(FRAME_MS) as usize;
+        let first = self.window.len().saturating_sub(frames_back * FRAME_SAMPLES);
+        let mut best: Option<(f64, usize)> = None;
+        let mut start = first;
+        while start + FRAME_SAMPLES <= self.window.len() {
+            let frame = &self.window[start..start + FRAME_SAMPLES];
+            let energy: f64 = frame.iter().map(|s| f64::from(*s) * f64::from(*s)).sum();
+            if best.is_none_or(|(e, _)| energy < e) {
+                best = Some((energy, start));
+            }
+            start += FRAME_SAMPLES;
+        }
+        best.map_or(self.window.len(), |(_, start)| start)
+    }
+
     fn end_utterance(&mut self, reason: EndReason, out: &mut Vec<SegEvent>) {
         let last = if self.window_has_speech {
             let tail = self.cfg.pause_frames as usize * FRAME_SAMPLES;
@@ -461,6 +486,15 @@ mod tests {
         fn feed(&mut self, frames: usize, prob: f32) {
             for _ in 0..frames {
                 let frame = vec![self.frame_no as f32; F];
+                self.seg.push_frame(&frame, prob, &mut self.events);
+                self.frame_no += 1;
+            }
+        }
+        /// Like [`Driver::feed`], but with every sample equal to `value`; used
+        /// to place a quiet frame among loud ones.
+        fn feed_values(&mut self, frames: usize, prob: f32, value: f32) {
+            for _ in 0..frames {
+                let frame = vec![value; F];
                 self.seg.push_frame(&frame, prob, &mut self.events);
                 self.frame_no += 1;
             }
@@ -673,17 +707,40 @@ mod tests {
     }
 
     #[test]
-    fn continuous_speech_is_cut_at_the_window_limit() {
+    fn continuous_speech_is_cut_at_the_quietest_recent_frame() {
         let mut d = Driver::new(cfg_ptt());
         let max = d.seg.config().max_window_frames as usize;
         d.feed(max + 50, 0.9);
         let commits = d.commits();
         assert_eq!(commits.len(), 1);
-        assert_eq!(commits[0].end, max * F);
+        // Sample values grow with the frame index, so the quietest frame in
+        // the lookback is its earliest one; the cut moves back from the
+        // window limit to just before it.
+        let lookback = SEAM_LOOKBACK_MS.div_ceil(FRAME_MS) as usize;
+        assert_eq!(commits[0].end, (max - lookback) * F);
         assert_eq!(d.snapshots(SnapshotKind::Final).len(), 1);
         d.seg.finish(&mut d.events);
         let (_, last, _) = d.ends()[0];
         assert_eq!(last.unwrap().window, 1);
+    }
+
+    #[test]
+    fn forced_cut_lands_just_before_the_quietest_frame() {
+        let mut d = Driver::new(cfg_ptt());
+        let max = d.seg.config().max_window_frames as usize;
+        // One very quiet frame sits 28 frames before the window limit, well
+        // inside the lookback.
+        let quiet = max - 28;
+        d.feed(quiet, 0.9);
+        d.feed_values(1, 0.9, 0.001);
+        d.feed(max - quiet - 1, 0.9);
+        let commits = d.commits();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].end, quiet * F);
+        let finals = d.snapshots(SnapshotKind::Final);
+        assert_eq!(finals.len(), 1);
+        assert_eq!(finals[0].key.end, quiet * F);
+        assert_eq!(d.seg.buffered_samples(), (max - quiet) * F, "audio after the seam stays for the next window");
     }
 
     #[test]
