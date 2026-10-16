@@ -54,6 +54,25 @@ impl TrayStatus {
         let t = format!("SwiftVoice: {body}");
         t.chars().take(127).collect()
     }
+
+    /// One-line status for the top of the menu. Kept short so the popup
+    /// stays narrow (`tooltip` carries the full text).
+    pub fn menu_title(&self) -> String {
+        let body = match self {
+            TrayStatus::Starting => "starting…".to_string(),
+            TrayStatus::Loading(m) => format!("loading {m}…"),
+            TrayStatus::Ready => "ready".into(),
+            TrayStatus::Listening => "listening…".into(),
+            TrayStatus::Processing => "transcribing…".into(),
+            TrayStatus::Downloading { model, percent } => match percent {
+                Some(p) => format!("downloading {model} {p}%"),
+                None => format!("downloading {model}…"),
+            },
+            TrayStatus::NeedsModel => "no speech model installed".into(),
+            TrayStatus::Error(e) => e.clone(),
+        };
+        format!("SwiftVoice: {body}")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,12 +104,12 @@ pub struct MenuState<'a> {
 pub fn build_menu(s: &MenuState) -> Vec<MenuEntry> {
     let cfg = s.cfg;
     let mut m = Vec::new();
-    m.push(MenuEntry::Label(s.status.tooltip(cfg)));
+    m.push(MenuEntry::Label(s.status.menu_title()));
     m.push(MenuEntry::Separator);
     let start_label =
         if s.listening { format!("Stop listening\t{}", cfg.hotkeys.toggle) } else { format!("Start listening\t{}", cfg.hotkeys.toggle) };
     m.push(MenuEntry::Item { label: start_label, cmd: TrayCommand::StartStop, enabled: true, checked: false, bold: true });
-    m.push(MenuEntry::Label(format!("Push-to-talk: hold {}", cfg.hotkeys.push_to_talk)));
+    m.push(MenuEntry::Label(format!("Push-to-talk\t{}", cfg.hotkeys.push_to_talk)));
     m.push(MenuEntry::Separator);
 
     m.push(MenuEntry::Submenu {
@@ -260,5 +279,12 @@ mod tests {
         assert!(long.tooltip(&cfg).chars().count() <= 127);
         assert!(TrayStatus::Ready.tooltip(&cfg).contains("Ctrl+Alt+Space"));
         assert_eq!(TrayStatus::Listening.tone(), IconTone::Listening);
+    }
+
+    #[test]
+    fn menu_title_is_compact() {
+        assert_eq!(TrayStatus::Ready.menu_title(), "SwiftVoice: ready");
+        assert_eq!(TrayStatus::Listening.menu_title(), "SwiftVoice: listening…");
+        assert!(TrayStatus::Ready.menu_title().chars().count() < TrayStatus::Ready.tooltip(&Config::default()).chars().count());
     }
 }
