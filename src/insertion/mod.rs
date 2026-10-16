@@ -22,7 +22,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
+use crossbeam_channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender};
 
 use crate::config::{InsertMethod, InsertTarget, InsertionConfig};
 use crate::hotkey::Hotkey;
@@ -266,10 +266,45 @@ pub struct InserterHandle {
     join: Option<JoinHandle<()>>,
 }
 
+/// Why a request could not be handed to the inserter thread, carrying the
+/// text back so the caller can keep it recoverable. The request is boxed
+/// because it is far larger than the `Ok` value and only comes back on this
+/// cold path.
+#[derive(Debug)]
+pub enum EnqueueError {
+    /// The queue stayed full for the whole wait.
+    Full(Box<InsertRequest>),
+    /// The inserter thread has exited (shutdown, or a panic).
+    Closed(Box<InsertRequest>),
+}
+
+/// How long [`InserterHandle::send`] waits for room in the queue before the
+/// request comes back to the caller. The inserter thread works through
+/// requests one at a time (modifier wait, paste, scheduled restore), so a
+/// queue that is still full after this long is stuck, not merely busy.
+const ENQUEUE_WAIT: Duration = Duration::from_millis(2_000);
+
 impl InserterHandle {
-    pub fn send(&self, req: InsertRequest) {
-        if self.tx.try_send(req).is_err() {
-            log::error!("insertion queue is full or closed; text dropped");
+    /// Hand `req` to the inserter thread, waiting up to `ENQUEUE_WAIT` for
+    /// room so a momentary backlog costs a little time, not the text. On
+    /// failure the request comes back: the caller must keep the text
+    /// recoverable (put it on the clipboard) and tell the user instead of
+    /// dropping it silently (see `WinPorts::insert`).
+    pub fn send(&self, req: InsertRequest) -> std::result::Result<(), EnqueueError> {
+        self.send_within(req, ENQUEUE_WAIT)
+    }
+
+    fn send_within(&self, req: InsertRequest, wait: Duration) -> std::result::Result<(), EnqueueError> {
+        match self.tx.send_timeout(req, wait) {
+            Ok(()) => Ok(()),
+            Err(SendTimeoutError::Timeout(req)) => {
+                log::error!("insertion queue full for {wait:?}; text handed back to the caller");
+                Err(EnqueueError::Full(Box::new(req)))
+            }
+            Err(SendTimeoutError::Disconnected(req)) => {
+                log::error!("inserter thread exited; text handed back to the caller");
+                Err(EnqueueError::Closed(Box::new(req)))
+            }
         }
     }
 }
@@ -484,5 +519,49 @@ mod tests {
         assert_eq!(ins.insert(&req("   ")), InsertOutcome::Empty);
         ins.insert(&req("line\n"));
         assert_eq!(ins.clipboard.text().unwrap(), "line\n");
+    }
+
+    #[test]
+    fn send_waits_for_a_slow_consumer_instead_of_dropping() {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let h = InserterHandle { tx, join: None };
+        assert!(h.send_within(req("in flight"), Duration::from_millis(10)).is_ok());
+        let consumer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(80));
+            rx.recv().unwrap().text
+        });
+        let started = Instant::now();
+        assert!(h.send_within(req("queued"), Duration::from_secs(5)).is_ok());
+        assert!(started.elapsed() >= Duration::from_millis(60), "the send must wait for room, not drop the text");
+        assert_eq!(consumer.join().unwrap(), "in flight");
+    }
+
+    #[test]
+    fn send_returns_a_stuck_request_to_the_caller() {
+        let (tx, rx) = crossbeam_channel::bounded(2);
+        let h = InserterHandle { tx, join: None };
+        assert!(h.send_within(req("one"), Duration::from_millis(10)).is_ok());
+        assert!(h.send_within(req("two"), Duration::from_millis(10)).is_ok());
+        let started = Instant::now();
+        match h.send_within(req("three"), Duration::from_millis(60)) {
+            Err(EnqueueError::Full(r)) => assert_eq!(r.text, "three"),
+            Ok(()) => panic!("a full queue must time out, not accept the request"),
+            Err(EnqueueError::Closed(_)) => panic!("the channel is still open"),
+        }
+        assert!(started.elapsed() >= Duration::from_millis(50), "a full queue must be waited on, not failed at once");
+        assert_eq!(rx.recv().unwrap().text, "one");
+        assert!(h.send_within(req("three"), Duration::from_millis(10)).is_ok());
+    }
+
+    #[test]
+    fn send_returns_the_request_when_the_inserter_thread_is_gone() {
+        let (tx, rx) = crossbeam_channel::bounded(2);
+        let h = InserterHandle { tx, join: None };
+        drop(rx);
+        match h.send_within(req("gone"), Duration::from_millis(10)) {
+            Err(EnqueueError::Closed(r)) => assert_eq!(r.text, "gone"),
+            Ok(()) => panic!("a dropped receiver must not accept the request"),
+            Err(EnqueueError::Full(_)) => panic!("a dropped receiver fails at once"),
+        }
     }
 }

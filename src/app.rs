@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{Receiver, Sender};
@@ -33,8 +33,9 @@ use crate::config::{Config, HotkeyConfig, OverlayConfig};
 use crate::controller::{Controller, Ports, Ui};
 use crate::events::{AppEvent, DownloadEvent, HotkeyKind, TrayCommand};
 use crate::hotkey::win::{HotkeyRegistry, TIMER_PTT_POLL, WM_SV_HOTKEY};
+use crate::insertion::clipboard::ClipboardBackend;
 use crate::insertion::win::{WinClipboard, WinDesktop};
-use crate::insertion::{self, InsertRequest, Inserter, InserterHandle, WindowHandle};
+use crate::insertion::{self, EnqueueError, InsertOutcome, InsertReport, InsertRequest, Inserter, InserterHandle, WindowHandle};
 use crate::overlay::win::Overlay;
 use crate::overlay::{OverlayView, Tone};
 use crate::platform::{self, wide};
@@ -161,7 +162,15 @@ impl Ports for WinPorts {
     }
 
     fn insert(&self, req: InsertRequest) {
-        self.inserter.send(req);
+        let started = Instant::now();
+        if let Err(e) = self.inserter.send(req) {
+            let waited = started.elapsed();
+            let (req, problem) = match e {
+                EnqueueError::Full(req) => (req, "Insertion is busy"),
+                EnqueueError::Closed(req) => (req, "Insertion stopped (restart SwiftVoice)"),
+            };
+            self.report_dropped(*req, problem, waited);
+        }
     }
 
     fn smart(&self, session: u64, utterance: u32, raw: String, post: Arc<PostProcessor>, language: Option<String>, english: bool) {
@@ -204,6 +213,26 @@ impl Ports for WinPorts {
             log::error!("cannot start download thread: {e}");
         }
         cancel
+    }
+}
+
+impl WinPorts {
+    /// The inserter could not take the request (the queue stayed full for
+    /// the whole wait, or its thread is gone): copy the text to the
+    /// clipboard so it stays recoverable, and report the outcome through
+    /// the normal insertion card instead of dropping the dictation
+    /// silently.
+    fn report_dropped(&self, req: InsertRequest, problem: &str, waited: Duration) {
+        let outcome = if req.text.trim().is_empty() {
+            InsertOutcome::Empty
+        } else {
+            match WinClipboard::default().set_text(&req.text, false) {
+                Ok(_) => InsertOutcome::Clipboard { reason: format!("{problem}. The text is on the clipboard; press Ctrl+V") },
+                Err(e) => InsertOutcome::Failed(format!("{problem}, and the clipboard could not be set ({e:#})")),
+            }
+        };
+        log::warn!("insertion was not queued ({problem}): {outcome:?}");
+        self.sink.send(AppEvent::Inserted(InsertReport { id: req.id, outcome, elapsed_ms: waited.as_millis() as u32 }));
     }
 }
 
