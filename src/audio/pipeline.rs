@@ -378,8 +378,9 @@ impl Pipeline {
             log::warn!("audio overrun: {n} samples dropped (the audio thread was starved)");
         }
         let rate = stream.sample_rate as usize;
-        loop {
-            let stream = self.stream.as_mut().expect("checked above");
+        // `forward_events` below can end the session and close the stream
+        // (keep_warm_secs = 0) inside a pass, so re-check every pass.
+        while let Some(stream) = self.stream.as_mut() {
             let n = stream.consumer.pop_slice(&mut self.buf);
             if n == 0 {
                 break;
@@ -518,5 +519,62 @@ fn note_xrun(warned_at: &mut Option<Instant>, err: &CaptureError) {
         log::debug!("microphone glitch: {}", err.message);
     } else {
         log::warn!("microphone glitch (recording continues): {}", err.message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::VadEngine;
+
+    /// Regression: a session can end inside `pump` while `keep_warm_secs` is 0,
+    /// which closes the stream out from under the drain loop (here the
+    /// no-speech rule ends it). The loop must notice and stop instead of
+    /// panicking on the next pass, which is what `expect("checked above")`
+    /// used to do.
+    #[test]
+    fn zero_keep_warm_session_end_does_not_panic() {
+        let (mut producer, consumer) = crate::audio::ring::ring(48_000);
+        // One second of digital silence, pushed in small chunks so the test
+        // keeps a trivial stack footprint.
+        let zeros = [0.0f32; 1_600];
+        for _ in 0..30 {
+            producer.push_slice(&zeros);
+        }
+
+        let vad_choice = VadChoice { engine: VadEngine::Energy, silero_model: None, energy_margin_db: 6.0 };
+        let settings = CaptureSettings {
+            device: "test".into(),
+            gain_db: 0.0,
+            noise_suppression: false,
+            keep_warm_secs: 0,
+            pre_roll_ms: 0,
+            vad: vad_choice.clone(),
+        };
+        let (vad, warning) = make_vad(&vad_choice);
+        assert!(warning.is_none(), "the energy VAD needs no model file: {warning:?}");
+
+        // The third silent frame (~90 ms) trips the no-speech rule.
+        let seg = SegmenterConfig::from_ms(0.5, 192, None, 0, 12, None, Some(90), None);
+        let processor = FrameProcessor::new(48_000, settings.gain_db, settings.noise_suppression, vad, seg);
+
+        let sink: AudioSink = Box::new(|_| {});
+        let mut pipeline = Pipeline::new(settings, sink);
+        pipeline.stream = Some(CaptureStream::new_for_test(consumer, 48_000, "test microphone"));
+        pipeline.processor = Some(processor);
+        pipeline.active = Some(Active {
+            session: 7,
+            mode: SessionMode::Toggle { continuous: false },
+            requested_at: Instant::now(),
+            started_reported: false,
+            silence_warned: false,
+            finishing: None,
+            finish_from_frame: 0,
+        });
+
+        pipeline.pump();
+
+        assert!(pipeline.active.is_none(), "the no-speech rule must end the session");
+        assert!(pipeline.stream.is_none(), "keep_warm_secs = 0 must close the stream");
     }
 }
