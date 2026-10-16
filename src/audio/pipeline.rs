@@ -148,6 +148,7 @@ struct Pipeline {
     events: Vec<SegEvent>,
     last_level: Instant,
     dropped_reported: u64,
+    xrun_warned_at: Option<Instant>,
 }
 
 impl Pipeline {
@@ -167,6 +168,7 @@ impl Pipeline {
             events: Vec::with_capacity(16),
             last_level: Instant::now(),
             dropped_reported: 0,
+            xrun_warned_at: None,
         }
     }
 
@@ -353,14 +355,21 @@ impl Pipeline {
     fn pump(&mut self) {
         let Some(stream) = self.stream.as_mut() else { return };
         if let Ok(err) = stream.errors.try_recv() {
-            log::error!("microphone stream error: {err}");
-            let session = self.active.as_ref().map(|a| a.session);
-            (self.sink)(AudioEvent::Failed { session, error: err });
-            if self.active.is_some() {
-                self.end_session();
+            if err.kind == CaptureErrorKind::Xrun {
+                // The driver dropped or duplicated samples (common while a call
+                // app shares the microphone). The stream keeps running, so log
+                // the glitch and carry on instead of ending the session.
+                note_xrun(&mut self.xrun_warned_at, &err);
+            } else {
+                log::error!("microphone stream error: {err}");
+                let session = self.active.as_ref().map(|a| a.session);
+                (self.sink)(AudioEvent::Failed { session, error: err });
+                if self.active.is_some() {
+                    self.end_session();
+                }
+                self.close_stream("stream error");
+                return;
             }
-            self.close_stream("stream error");
-            return;
         }
         let dropped = stream.consumer.dropped();
         if dropped > self.dropped_reported {
@@ -495,5 +504,19 @@ impl Pipeline {
         }
         self.warm_until = None;
         self.preroll.clear();
+    }
+}
+
+/// Buffer glitches (xruns) are not fatal: cpal reports one when the driver
+/// dropped or duplicated samples, but the stream keeps running. Log the first
+/// glitch in a while and keep recording.
+fn note_xrun(warned_at: &mut Option<Instant>, err: &CaptureError) {
+    let now = Instant::now();
+    let recent = warned_at.is_some_and(|t| now.duration_since(t) < Duration::from_secs(10));
+    *warned_at = Some(now);
+    if recent {
+        log::debug!("microphone glitch: {}", err.message);
+    } else {
+        log::warn!("microphone glitch (recording continues): {}", err.message);
     }
 }

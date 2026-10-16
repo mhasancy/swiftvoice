@@ -85,6 +85,11 @@ level in *Settings > System > Sound > Input*.
 WASAPI exclusive mode (some DAWs and call apps), or pick another device in
 the tray.
 
+**"microphone glitch (recording continues)" in the log during a call.**
+Another app (Google Meet, Zoom, OBS) keeps the microphone open even while
+muted, and the shared driver dropped a few samples. Dictation continues with
+at most a tiny gap; no action is needed.
+
 **Wrong microphone.** Tray: *Microphone* lists the devices. If a chosen
 device disappears, SwiftVoice falls back to the default and says so.
 

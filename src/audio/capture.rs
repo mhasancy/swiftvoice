@@ -17,6 +17,8 @@ pub enum CaptureErrorKind {
     DeviceLost,
     Busy,
     Unsupported,
+    /// The driver dropped or duplicated some samples; the stream keeps running.
+    Xrun,
     Other,
 }
 
@@ -41,6 +43,7 @@ impl CaptureError {
             CaptureErrorKind::DeviceLost => "The microphone was disconnected. SwiftVoice will use it again when it returns.",
             CaptureErrorKind::Busy => "Another app is using the microphone exclusively. Close it or pick another microphone.",
             CaptureErrorKind::Unsupported => "This microphone's audio format is not supported; pick another device.",
+            CaptureErrorKind::Xrun => "Some audio was dropped while another app shared the microphone; recording continues.",
             CaptureErrorKind::Other => "See the log file for details (tray menu > Open logs folder).",
         }
     }
@@ -81,9 +84,13 @@ mod imp {
             K::DeviceNotAvailable | K::StreamInvalidated => CaptureErrorKind::DeviceLost,
             K::DeviceBusy => CaptureErrorKind::Busy,
             K::UnsupportedConfig | K::UnsupportedOperation => CaptureErrorKind::Unsupported,
+            // The driver dropped or duplicated samples; the stream keeps running.
+            K::Xrun => CaptureErrorKind::Xrun,
             _ => CaptureErrorKind::Other,
         };
-        CaptureError::new(kind, format!("{context}: {e}."))
+        // Driver messages often end with a period already; keep exactly one.
+        let detail = e.to_string();
+        CaptureError::new(kind, format!("{context}: {}.", detail.trim_end_matches('.')))
     }
 
     fn device_name(d: &cpal::Device) -> String {
@@ -189,6 +196,24 @@ mod imp {
         stream.play().map_err(|e| map_err(&e, &format!("Cannot start \"{name}\"")))?;
         log::info!("microphone \"{name}\" opened: {sample_rate} Hz, {channels} ch, {:?}", supported.sample_format());
         Ok((CaptureStream { consumer, sample_rate, channels, device_name: name, errors: err_rx, _stream: stream }, warning))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn xrun_has_its_own_kind() {
+            let e: cpal::Error = cpal::ErrorKind::Xrun.into();
+            assert_eq!(map_err(&e, "Microphone error").kind, CaptureErrorKind::Xrun);
+        }
+
+        #[test]
+        fn mapped_messages_keep_a_single_trailing_period() {
+            let e: cpal::Error = cpal::ErrorKind::Xrun.into();
+            let msg = map_err(&e, "Microphone error").message;
+            assert!(msg.ends_with('.') && !msg.ends_with(".."), "{msg}");
+        }
     }
 }
 
