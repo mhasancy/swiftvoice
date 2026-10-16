@@ -5,7 +5,10 @@
 //! folder laid out like `<dir>/<model id>/...` (what `swiftvoice models
 //! download` creates) and ONNX Runtime can be found (next to the test
 //! binary or via `SWIFTVOICE_ORT_DYLIB`). Test audio comes from
-//! `SWIFTVOICE_TEST_AUDIO` (a folder with `en.wav`, `de.wav`, ...).
+//! `SWIFTVOICE_TEST_AUDIO` (a folder with `en.wav`, `de.wav`, ...). With
+//! `SWIFTVOICE_TEST_STRICT=1` a missing model or clip fails the test
+//! instead of skipping, so the `golden-audio` CI job, which sets it via
+//! `scripts/golden-audio.sh`, cannot pass without transcribing.
 //!
 //! Expected transcripts are the output of sherpa-onnx 1.13.8 (an independent
 //! C++ implementation) for the same model files. One exception: for es.wav
@@ -22,6 +25,11 @@ fn env_dir(var: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from).filter(|p| p.is_dir())
 }
 
+/// Skips become failures when `SWIFTVOICE_TEST_STRICT=1`.
+fn strict() -> bool {
+    std::env::var("SWIFTVOICE_TEST_STRICT").is_ok_and(|v| v == "1")
+}
+
 fn normalise(s: &str) -> String {
     s.to_lowercase()
         .chars()
@@ -34,11 +42,16 @@ fn normalise(s: &str) -> String {
 
 fn check(model_id: &str, cases: &[(&str, &str)]) {
     let (Some(models), Some(audio)) = (env_dir("SWIFTVOICE_TEST_MODELS"), env_dir("SWIFTVOICE_TEST_AUDIO")) else {
+        assert!(
+            !strict(),
+            "SWIFTVOICE_TEST_STRICT=1 needs SWIFTVOICE_TEST_MODELS and SWIFTVOICE_TEST_AUDIO to point to the models and audio folders"
+        );
         eprintln!("skipping {model_id}: set SWIFTVOICE_TEST_MODELS and SWIFTVOICE_TEST_AUDIO to run");
         return;
     };
     let info = catalog::find(model_id).unwrap();
     if !asr::download::is_installed(&models, info) {
+        assert!(!strict(), "{model_id} is not installed in {}", models.display());
         eprintln!("skipping {model_id}: not installed in {}", models.display());
         return;
     }
@@ -46,6 +59,7 @@ fn check(model_id: &str, cases: &[(&str, &str)]) {
     for (file, expected) in cases {
         let path = audio.join(file);
         if !path.exists() {
+            assert!(!strict(), "{} is missing", path.display());
             eprintln!("skipping {}: missing", path.display());
             continue;
         }

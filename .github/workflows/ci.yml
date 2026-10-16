@@ -79,3 +79,22 @@ jobs:
       - run: cargo test --locked --no-default-features
       - name: Windows target check (no whisper.cpp)
         run: cargo clippy --all-targets --locked --no-default-features --target x86_64-pc-windows-msvc -- -D warnings
+
+  golden-audio:
+    # End-to-end recognition with the real Parakeet models on the pinned
+    # reference clips ("golden audio"): downloads the model archives and the
+    # clips (about 590 MB; every digest verified) and runs
+    # tests/models_e2e.rs, which would otherwise skip. The script sets
+    # SWIFTVOICE_TEST_STRICT, so a missing model or clip fails the job
+    # instead of quietly skipping it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain (pinned in rust-toolchain.toml)
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal
+          rustc --version
+      - name: Golden-audio transcription
+        run: scripts/golden-audio.sh

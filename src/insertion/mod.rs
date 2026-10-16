@@ -528,12 +528,14 @@ mod tests {
         assert!(h.send_within(req("in flight"), Duration::from_millis(10)).is_ok());
         let consumer = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(80));
-            rx.recv().unwrap().text
+            // Take both requests before the receiver drops, or a send that
+            // waited for room races the drop and fails as closed.
+            let first = rx.recv().unwrap().text;
+            let second = rx.recv_timeout(Duration::from_secs(5)).expect("the queued request must arrive, not be dropped").text;
+            (first, second)
         });
-        let started = Instant::now();
         assert!(h.send_within(req("queued"), Duration::from_secs(5)).is_ok());
-        assert!(started.elapsed() >= Duration::from_millis(60), "the send must wait for room, not drop the text");
-        assert_eq!(consumer.join().unwrap(), "in flight");
+        assert_eq!(consumer.join().unwrap(), ("in flight".to_string(), "queued".to_string()));
     }
 
     #[test]
