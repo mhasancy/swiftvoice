@@ -65,8 +65,30 @@ pub struct CaptureStream {
     pub device_name: String,
     /// Errors reported asynchronously by the driver thread.
     pub errors: crossbeam_channel::Receiver<CaptureError>,
+    /// Keeps the driver stream alive while the session is warm. `None` only
+    /// in tests, which build a stream without a device.
     #[cfg(windows)]
-    _stream: cpal::Stream,
+    _stream: Option<cpal::Stream>,
+}
+
+#[cfg(all(test, windows))]
+impl CaptureStream {
+    /// A stream with no driver for tests: only the samples the test pushes
+    /// into the ring arrive, and no errors are reported.
+    pub(crate) fn new_for_test(consumer: Consumer, sample_rate: u32, device_name: &str) -> CaptureStream {
+        let (_err_tx, errors) = crossbeam_channel::bounded(16);
+        CaptureStream { consumer, sample_rate, channels: 1, device_name: device_name.to_string(), errors, _stream: None }
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+impl CaptureStream {
+    /// A stream with no driver for tests: only the samples the test pushes
+    /// into the ring arrive, and no errors are reported.
+    pub(crate) fn new_for_test(consumer: Consumer, sample_rate: u32, device_name: &str) -> CaptureStream {
+        let (_err_tx, errors) = crossbeam_channel::bounded(16);
+        CaptureStream { consumer, sample_rate, channels: 1, device_name: device_name.to_string(), errors }
+    }
 }
 
 #[cfg(windows)]
@@ -195,7 +217,7 @@ mod imp {
         .map_err(|e| map_err(&e, &format!("Cannot open \"{name}\"")))?;
         stream.play().map_err(|e| map_err(&e, &format!("Cannot start \"{name}\"")))?;
         log::info!("microphone \"{name}\" opened: {sample_rate} Hz, {channels} ch, {:?}", supported.sample_format());
-        Ok((CaptureStream { consumer, sample_rate, channels, device_name: name, errors: err_rx, _stream: stream }, warning))
+        Ok((CaptureStream { consumer, sample_rate, channels, device_name: name, errors: err_rx, _stream: Some(stream) }, warning))
     }
 
     #[cfg(test)]
