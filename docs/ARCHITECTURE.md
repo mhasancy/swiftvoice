@@ -81,7 +81,9 @@ error for that utterance instead of blocking the audio thread.
      transcribed. The work left after release is therefore about one
      phrase, however long you talked;
    - `Snapshot(Partial)` every 700 ms while speaking, for the live overlay;
-   - a hard cut at 16 s without any pause keeps memory and latency bounded.
+   - a hard cut at 16 s without any pause keeps memory and latency bounded
+     and lands just before the quietest frame of the last 2 s, so the new
+     window starts in a word gap instead of mid-word.
 5. **Context across windows.** A window after a commit is transcribed with
    the previous window's last phrase prepended (1-2.5 s, starting at an
    earlier pause point). The model then continues the sentence: casing,
