@@ -30,3 +30,7 @@ The sherpa-onnx model archives also contain test clips: `test_wavs/` in
 each Parakeet archive. The project also publishes `en.wav`, `de.wav`,
 `fr.wav` and `es.wav` in its `asr-models` release. `tests/models_e2e.rs`
 uses those clips.
+
+The `golden-audio` CI job assembles those clips and runs
+`tests/models_e2e.rs` on every pull request; run the same locally on Linux
+with `scripts/golden-audio.sh`.
