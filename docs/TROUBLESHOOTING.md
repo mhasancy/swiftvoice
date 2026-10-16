@@ -88,7 +88,10 @@ the tray.
 **"microphone glitch (recording continues)" in the log during a call.**
 Another app (Google Meet, Zoom, OBS) keeps the microphone open even while
 muted, and the shared driver dropped a few samples. Dictation continues with
-at most a tiny gap; no action is needed.
+at most a tiny gap; no action is needed. Each dictation ends with a
+`session N: ...` log line that counts how much audio arrived and how many
+glitches or dropped samples it contained, so a word that went missing can be
+checked against what the microphone actually delivered.
 
 **Wrong microphone.** Tray: *Microphone* lists the devices. If a chosen
 device disappears, SwiftVoice falls back to the default and says so.

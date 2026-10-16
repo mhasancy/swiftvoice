@@ -131,6 +131,11 @@ struct Active {
     /// Remaining release-tail frames once a finish was requested.
     finishing: Option<u64>,
     finish_from_frame: u64,
+    /// Microphone glitches (xruns) heard while this session was listening.
+    xruns: u64,
+    /// Samples the ring had to drop while this session was listening (the
+    /// audio thread was starved).
+    dropped_samples: u64,
 }
 
 struct Pipeline {
@@ -346,6 +351,8 @@ impl Pipeline {
             silence_warned: false,
             finishing: None,
             finish_from_frame: 0,
+            xruns: 0,
+            dropped_samples: 0,
         });
         self.last_level = Instant::now();
         self.forward_events();
@@ -353,13 +360,15 @@ impl Pipeline {
 
     /// Drain the ring buffer and run the processor.
     fn pump(&mut self) {
-        let Some(stream) = self.stream.as_mut() else { return };
-        if let Ok(err) = stream.errors.try_recv() {
+        // Driver errors first, without a stream borrow held, so the handlers
+        // are free to end the session or close the stream.
+        if let Some(err) = self.stream.as_ref().and_then(|s| s.errors.try_recv().ok()) {
             if err.kind == CaptureErrorKind::Xrun {
                 // The driver dropped or duplicated samples (common while a call
-                // app shares the microphone). The stream keeps running, so log
-                // the glitch and carry on instead of ending the session.
-                note_xrun(&mut self.xrun_warned_at, &err);
+                // app shares the microphone). The stream keeps running, so
+                // count the glitch against the session and carry on instead of
+                // ending it.
+                self.note_glitch(&err);
             } else {
                 log::error!("microphone stream error: {err}");
                 let session = self.active.as_ref().map(|a| a.session);
@@ -368,13 +377,16 @@ impl Pipeline {
                     self.end_session();
                 }
                 self.close_stream("stream error");
-                return;
             }
         }
+        let Some(stream) = self.stream.as_mut() else { return };
         let dropped = stream.consumer.dropped();
         if dropped > self.dropped_reported {
             let n = dropped - self.dropped_reported;
             self.dropped_reported = dropped;
+            if let Some(a) = self.active.as_mut() {
+                a.dropped_samples += n;
+            }
             log::warn!("audio overrun: {n} samples dropped (the audio thread was starved)");
         }
         let rate = stream.sample_rate as usize;
@@ -487,6 +499,8 @@ impl Pipeline {
 
     fn end_session(&mut self) {
         if let Some(active) = self.active.take() {
+            let frames = self.processor.as_ref().map(|p| p.frames()).unwrap_or(0);
+            log::info!("{}", session_summary(active.session, frames, active.xruns, active.dropped_samples));
             (self.sink)(AudioEvent::Ended { session: active.session });
         }
         if let Some(s) = self.pending_settings.take() {
@@ -506,20 +520,45 @@ impl Pipeline {
         self.warm_until = None;
         self.preroll.clear();
     }
+
+    /// Buffer glitches (xruns) are not fatal: cpal reports one when the
+    /// driver dropped or duplicated samples, but the stream keeps running.
+    /// Count it against the active session and log it (a warning the first
+    /// time in a while, then debug) so a call app sharing the microphone
+    /// cannot flood the log.
+    fn note_glitch(&mut self, err: &CaptureError) {
+        if let Some(a) = self.active.as_mut() {
+            a.xruns += 1;
+        }
+        let now = Instant::now();
+        let recent = self.xrun_warned_at.is_some_and(|t| now.duration_since(t) < Duration::from_secs(10));
+        self.xrun_warned_at = Some(now);
+        if recent {
+            log::debug!("microphone glitch: {}", err.message);
+        } else {
+            log::warn!("microphone glitch (recording continues): {}", err.message);
+        }
+    }
 }
 
-/// Buffer glitches (xruns) are not fatal: cpal reports one when the driver
-/// dropped or duplicated samples, but the stream keeps running. Log the first
-/// glitch in a while and keep recording.
-fn note_xrun(warned_at: &mut Option<Instant>, err: &CaptureError) {
-    let now = Instant::now();
-    let recent = warned_at.is_some_and(|t| now.duration_since(t) < Duration::from_secs(10));
-    *warned_at = Some(now);
-    if recent {
-        log::debug!("microphone glitch: {}", err.message);
-    } else {
-        log::warn!("microphone glitch (recording continues): {}", err.message);
+/// One line for the log with what the microphone did during a session: how
+/// much audio it heard and any glitches counted while it listened. When a
+/// transcription looks wrong, this says whether the audio itself went missing.
+fn session_summary(session: u64, frames: u64, xruns: u64, dropped: u64) -> String {
+    let secs = frames as f64 * FRAME_MS as f64 / 1000.0;
+    if xruns == 0 && dropped == 0 {
+        return format!("session {session}: {secs:.1} s of audio, no glitches");
     }
+    let mut parts = Vec::with_capacity(2);
+    if xruns > 0 {
+        let plural = if xruns == 1 { "" } else { "es" };
+        parts.push(format!("{xruns} microphone glitch{plural}"));
+    }
+    if dropped > 0 {
+        let plural = if dropped == 1 { "" } else { "s" };
+        parts.push(format!("{dropped} sample{plural} dropped"));
+    }
+    format!("session {session}: {secs:.1} s of audio, {}", parts.join(", "))
 }
 
 #[cfg(test)]
@@ -570,11 +609,65 @@ mod tests {
             silence_warned: false,
             finishing: None,
             finish_from_frame: 0,
+            xruns: 0,
+            dropped_samples: 0,
         });
 
         pipeline.pump();
 
         assert!(pipeline.active.is_none(), "the no-speech rule must end the session");
         assert!(pipeline.stream.is_none(), "keep_warm_secs = 0 must close the stream");
+    }
+
+    #[test]
+    fn session_summary_lists_glitches_and_dropped_samples() {
+        assert_eq!(session_summary(7, 200, 0, 0), "session 7: 6.4 s of audio, no glitches");
+        assert_eq!(session_summary(7, 200, 1, 0), "session 7: 6.4 s of audio, 1 microphone glitch");
+        assert_eq!(session_summary(7, 500, 2, 0), "session 7: 16.0 s of audio, 2 microphone glitches");
+        assert_eq!(session_summary(7, 32, 0, 1), "session 7: 1.0 s of audio, 1 sample dropped");
+        assert_eq!(session_summary(7, 200, 1, 480), "session 7: 6.4 s of audio, 1 microphone glitch, 480 samples dropped");
+    }
+
+    #[test]
+    fn glitches_and_overruns_are_counted_against_the_session() {
+        // A ring with room for exactly 1 000 samples, then an overrun of 50.
+        let (mut producer, consumer) = crate::audio::ring::ring(1_000);
+        assert_eq!(producer.push_slice(&[0.0; 1_000]), 1_000, "the ring takes exactly its capacity");
+        assert_eq!(producer.push_slice(&[0.0; 50]), 0, "the ring is full, so the 50 new samples are dropped");
+
+        let settings = CaptureSettings {
+            device: "test".into(),
+            gain_db: 0.0,
+            noise_suppression: false,
+            keep_warm_secs: 0,
+            pre_roll_ms: 0,
+            vad: VadChoice { engine: VadEngine::Energy, silero_model: None, energy_margin_db: 6.0 },
+        };
+        let sink: AudioSink = Box::new(|_| {});
+        let mut pipeline = Pipeline::new(settings, sink);
+        pipeline.stream = Some(CaptureStream::new_for_test(consumer, 48_000, "test microphone"));
+        pipeline.active = Some(Active {
+            session: 7,
+            mode: SessionMode::Toggle { continuous: false },
+            requested_at: Instant::now(),
+            started_reported: true,
+            silence_warned: true,
+            finishing: None,
+            finish_from_frame: 0,
+            xruns: 0,
+            dropped_samples: 0,
+        });
+
+        let xrun = CaptureError::new(CaptureErrorKind::Xrun, "driver glitch (test)");
+        pipeline.note_glitch(&xrun);
+        pipeline.note_glitch(&xrun);
+        pipeline.pump();
+
+        let active = pipeline.active.as_ref().expect("the session stays active");
+        assert_eq!(active.xruns, 2, "both glitches are counted against the session");
+        assert_eq!(active.dropped_samples, 50, "the overrun is counted against the session");
+
+        pipeline.end_session();
+        assert!(pipeline.active.is_none(), "ending the session must not hang on the summary");
     }
 }
