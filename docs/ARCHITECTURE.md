@@ -208,6 +208,11 @@ The default `method = "auto"`:
   notice.
 - **A muted or blocked microphone** sends pure digital silence. After
   1.5 s a warning explains the likely privacy-setting cause.
+- **Buffer glitches while another app shares the microphone.** Driver
+  xruns never end a session: they are counted per session, together with
+  overruns (samples the ring had to drop), and each session ends with a
+  one-line summary of its audio in the log, so a strange transcription can
+  be checked against what the microphone actually delivered.
 - **A stuck insertion queue.** Dictated text reaches the inserter thread
   through a bounded queue; if the queue stays full (or the thread has
   exited) the text is copied to the clipboard with a card explaining why,
