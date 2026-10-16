@@ -208,6 +208,10 @@ The default `method = "auto"`:
   notice.
 - **A muted or blocked microphone** sends pure digital silence. After
   1.5 s a warning explains the likely privacy-setting cause.
+- **A stuck insertion queue.** Dictated text reaches the inserter thread
+  through a bounded queue; if the queue stays full (or the thread has
+  exited) the text is copied to the clipboard with a card explaining why,
+  instead of being dropped with only a log line.
 - **Sleep/resume and screen lock.** Listening stops on sleep and on lock.
   On resume the device is released and the hotkeys re-registered.
 - **Explorer restart.** The tray icon is re-added on `TaskbarCreated`.
