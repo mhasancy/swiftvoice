@@ -302,6 +302,18 @@ impl Worker {
         if let Some((_, err)) = self.failed.iter().find(|(m, _)| m == id) {
             return Err(err.clone());
         }
+        if self.engines.len() >= MAX_LOADED {
+            // Evict before the load, so the load's memory peak is MAX_LOADED
+            // engines, not MAX_LOADED + 1.
+            if let Some(pos) = self.engines.iter().enumerate().min_by_key(|(_, l)| l.last_used).map(|(i, _)| i) {
+                let old = self.engines.remove(pos);
+                log::info!("unloading model {} to make room", old.id);
+                let id = old.id.clone();
+                drop(old);
+                crate::memory::release_free_memory();
+                (self.sink)(WorkerEvent::ModelUnloaded { model: id });
+            }
+        }
         (self.sink)(WorkerEvent::ModelLoading { model: id.to_string() });
         let started = Instant::now();
         super::runtime::set_low_memory(self.config.low_memory);
@@ -337,17 +349,6 @@ impl Worker {
         }
         log::info!("model {id} ready: load {load_ms} ms, warm-up {warmup_ms} ms");
         (self.sink)(WorkerEvent::ModelLoaded { model: id.to_string(), load_ms, warmup_ms });
-        if self.engines.len() >= MAX_LOADED {
-            // Evict the least recently used engine.
-            if let Some(pos) = self.engines.iter().enumerate().min_by_key(|(_, l)| l.last_used).map(|(i, _)| i) {
-                let old = self.engines.remove(pos);
-                log::info!("unloading model {} to make room", old.id);
-                let id = old.id.clone();
-                drop(old);
-                crate::memory::release_free_memory();
-                (self.sink)(WorkerEvent::ModelUnloaded { model: id });
-            }
-        }
         self.engines.push(Loaded { id: id.to_string(), engine, last_used: Instant::now() });
         self.last_activity = Instant::now();
         Ok(&mut self.engines.last_mut().expect("just pushed").engine)
@@ -438,5 +439,30 @@ mod tests {
         let mut w = worker();
         let err = w.engine("not-a-model").err().unwrap();
         assert!(err.contains("unknown model"), "{err}");
+    }
+
+    struct StubEngine;
+
+    impl SpeechEngine for StubEngine {
+        fn transcribe(&mut self, _audio: &[f32], _language: Option<&str>) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+    }
+
+    fn stub() -> Box<dyn SpeechEngine> {
+        Box::new(StubEngine)
+    }
+
+    #[test]
+    fn a_full_cache_evicts_the_oldest_engine_before_loading_the_next_model() {
+        let mut w = worker();
+        w.engines.push(Loaded { id: "old".into(), engine: stub(), last_used: Instant::now() - Duration::from_secs(10) });
+        w.engines.push(Loaded { id: "recent".into(), engine: stub(), last_used: Instant::now() });
+        assert_eq!(w.engines.len(), MAX_LOADED);
+        // The load fails (unknown model), but the cache must already have made
+        // room before it was attempted: eviction comes first.
+        assert!(w.engine("not-a-model").is_err());
+        assert_eq!(w.engines.len(), MAX_LOADED - 1);
+        assert_eq!(w.engines[0].id, "recent", "the least recently used engine goes first");
     }
 }
