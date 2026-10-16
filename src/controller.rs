@@ -443,7 +443,10 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                 }
                 let text = error.to_string();
                 self.show(OverlayView::Message { text: tail_text(&text, 140), tone: Tone::Error }, Some(6000));
-                self.ui.notify("Microphone problem", &text, Tone::Error);
+                // A recurring problem refreshes the overlay; one balloon per distinct failure.
+                if self.warned.insert(text.clone()) {
+                    self.ui.notify("Microphone problem", &text, Tone::Error);
+                }
             }
             AudioEvent::Devices(list) => match list {
                 Ok(list) => self.devices = list,
@@ -981,6 +984,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::audio::capture::{CaptureError, CaptureErrorKind};
     use crate::audio::{EndReason, Snapshot};
     use crate::postprocess::PostResult;
 
@@ -1318,6 +1322,23 @@ mod tests {
         c.handle(output(1, 0, 0, 8000, SnapshotKind::Partial, "hello wor"));
         let last = log.0.borrow().overlay.last().cloned().unwrap();
         assert!(matches!(last, OverlayView::Listening { ref text, .. } if text == "hello wor"), "{last:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn microphone_problem_popup_fires_once_per_distinct_error() {
+        let (mut c, log, dir) = setup(PostMode::Clean);
+        let fail =
+            |error: &str| AppEvent::Audio(AudioEvent::Failed { session: None, error: CaptureError::new(CaptureErrorKind::Other, error) });
+        c.handle(fail("Microphone error: A buffer underrun or overrun occurred."));
+        c.handle(fail("Microphone error: A buffer underrun or overrun occurred."));
+        let notes = log.0.borrow().notes.clone();
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("Microphone problem: "), "{}", notes[0]);
+        assert_eq!(log.0.borrow().overlay.len(), 2, "the overlay still shows every occurrence");
+        // A different failure is still announced.
+        c.handle(fail("The audio device changed."));
+        assert_eq!(log.0.borrow().notes.len(), 2);
         let _ = std::fs::remove_dir_all(dir);
     }
 }
