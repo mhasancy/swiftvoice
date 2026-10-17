@@ -4,10 +4,11 @@
 //! 1. Wait briefly for the user to release Ctrl/Alt/Shift/Win (otherwise
 //!    our Ctrl+V would become Ctrl+Alt+V); release them synthetically if
 //!    they stay down.
-//! 2. Check the target: no focused window or SwiftVoice itself -> the text
-//!    goes to the clipboard with a notice; a window running as
-//!    administrator (when SwiftVoice is not) -> same, because Windows blocks
-//!    simulated input into it (UIPI) without telling the sender.
+//! 2. Check the target: no focused window, SwiftVoice itself, the desktop
+//!    or taskbar, or no text field at all -> the text goes to the clipboard
+//!    with a notice; a window running as administrator (when SwiftVoice is
+//!    not) -> same, because Windows blocks simulated input into it (UIPI)
+//!    without telling the sender.
 //! 3. Paste through the clipboard (fast, exact Unicode, works in browsers,
 //!    Office, Electron apps, terminals), restoring the previous clipboard.
 //!    Apps listed in `type_apps`, or a clipboard we cannot snapshot, get
@@ -53,6 +54,10 @@ pub trait Desktop {
     fn send_shortcut(&self, shortcut: &Hotkey) -> Result<()>;
     fn type_text(&self, text: &str) -> Result<()>;
     fn self_elevated(&self) -> bool;
+    /// Whether the focused target can receive text: `Some(false)` only when
+    /// it positively cannot (desktop, taskbar, an icon or file list); `None`
+    /// when unknown, which the caller treats as writable.
+    fn focused_editable(&self) -> Option<bool>;
 }
 
 #[derive(Debug, Clone)]
@@ -202,6 +207,11 @@ impl<D: Desktop, C: ClipboardBackend> Inserter<D, C> {
             );
         }
         let typed_app = s.type_apps.contains(&target.process);
+        // Typing works even where Windows exposes no text element (games), so
+        // an app listed in `type_apps` skips the writability check.
+        if !typed_app && self.desktop.focused_editable() == Some(false) {
+            return self.clipboard_fallback(&text, "No text field is focused; the text is on the clipboard".into());
+        }
         let method = match s.method {
             InsertMethod::Type => InsertMethod::Type,
             InsertMethod::Paste => InsertMethod::Paste,
@@ -371,6 +381,8 @@ mod tests {
         elevated_self: bool,
         log: RefCell<Vec<String>>,
         focusable: Vec<WindowHandle>,
+        /// `Some(false)` simulates the desktop/taskbar with no text field.
+        editable: Option<bool>,
     }
 
     impl Desktop for FakeDesktop {
@@ -401,6 +413,9 @@ mod tests {
         }
         fn self_elevated(&self) -> bool {
             self.elevated_self
+        }
+        fn focused_editable(&self) -> Option<bool> {
+            self.editable
         }
     }
 
@@ -481,6 +496,23 @@ mod tests {
         own.own = true;
         let mut ins = inserter(Some(own));
         assert!(matches!(ins.insert(&req("z")), InsertOutcome::Clipboard { .. }));
+    }
+
+    #[test]
+    fn desktop_and_list_targets_get_the_clipboard() {
+        let mut ins = inserter(Some(win(1, "explorer.exe")));
+        ins.desktop.editable = Some(false);
+        let out = ins.insert(&req("said while nothing was focused"));
+        assert_eq!(out, InsertOutcome::Clipboard { reason: "No text field is focused; the text is on the clipboard".into() });
+        assert_eq!(ins.clipboard.text().unwrap(), "said while nothing was focused ");
+        // Apps that never expose a text field to Windows but take typed keys
+        // (games) opt out of the check with `type_apps`.
+        let mut s = settings();
+        s.type_apps = vec!["explorer.exe".into()];
+        let mut ins = inserter(Some(win(1, "explorer.exe")));
+        ins.desktop.editable = Some(false);
+        let out = ins.insert(&InsertRequest { id: 2, text: "gg".into(), original: None, settings: s });
+        assert_eq!(out, InsertOutcome::Inserted { method: "type", app: "explorer.exe".into() });
     }
 
     #[test]

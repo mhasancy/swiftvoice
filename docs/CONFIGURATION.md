@@ -166,11 +166,13 @@ That is why Smart mode is opt-in, and why `timeout_ms` caps the wait.
 | `opacity` | `0.94` | 0.3 … 1.0 |
 | `hide_after_ms` | `900` | 0 … 10000; how long the result stays visible |
 
-While you dictate, the indicator is a single red dot (no text) at the
-middle-left of the monitor that holds the focused window; its size follows
-your voice. When the text has been inserted the dot flashes green for
-`hide_after_ms` and disappears — a successful insertion shows no card.
-`position` applies to the remaining result and message cards.
+While you dictate, a card near the bottom (or top) of the monitor that
+holds the focused window shows the live transcript as it comes in; a red
+dot on the card follows your voice. When the text has been inserted a bare
+green dot flashes at the middle-left for `hide_after_ms` and disappears —
+a successful insertion shows no card. When nothing can take the text (no
+focused window, the desktop, the taskbar, an icon or file list) the card
+says so and the text stays on the clipboard instead.
 
 ## Vocabulary (`vocabulary.toml`)
 

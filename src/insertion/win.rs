@@ -25,7 +25,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, VK_RETURN, VK_TAB,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    BringWindowToTop, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, IsIconic, IsWindow,
+    SetForegroundWindow, ShowWindow, GUITHREADINFO, SW_RESTORE,
 };
 
 use super::clipboard::{ClipboardBackend, ClipboardSnapshot, SnapshotError};
@@ -141,6 +142,13 @@ fn process_name(pid: u32) -> (String, bool) {
     }
 }
 
+/// Class name of a window ("" when it no longer exists).
+unsafe fn class_name(hwnd: HWND) -> String {
+    let mut buf = [0u16; 64];
+    let n = GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+}
+
 impl Desktop for WinDesktop {
     fn foreground(&self) -> Option<WindowInfo> {
         unsafe {
@@ -155,6 +163,34 @@ impl Desktop for WinDesktop {
             }
             let (process, elevated) = process_name(pid);
             Some(WindowInfo { handle: hwnd as isize, process, own: false, elevated })
+        }
+    }
+
+    fn focused_editable(&self) -> Option<bool> {
+        // SAFETY: plain Win32 queries; a dead window yields an empty class name.
+        unsafe {
+            let fg: HWND = GetForegroundWindow();
+            if fg.is_null() {
+                return None; // covered by the no-focus fallback in `Inserter::insert`
+            }
+            // The desktop, the taskbar and their icon lists never hold a text
+            // field; anything typed there can only be lost.
+            if matches!(class_name(fg).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
+                return Some(false);
+            }
+            let mut pid = 0u32;
+            let thread = GetWindowThreadProcessId(fg, &mut pid);
+            let mut gti: GUITHREADINFO = std::mem::zeroed();
+            gti.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+            if GetGUIThreadInfo(thread, &mut gti) == 0 {
+                return None;
+            }
+            // No control holds the keyboard focus, or an icon/file list does:
+            // nothing in that window can receive text.
+            if gti.hwndFocus.is_null() || class_name(gti.hwndFocus) == "SysListView32" {
+                return Some(false);
+            }
+            None
         }
     }
 

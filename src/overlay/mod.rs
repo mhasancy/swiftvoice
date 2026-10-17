@@ -18,12 +18,16 @@ pub enum Tone {
 #[derive(Debug, Clone, PartialEq)]
 pub enum OverlayView {
     Hidden,
-    /// Recording; drawn as the level dot.
+    /// Recording; `text` is the live partial transcript (may be empty).
     Listening {
         level: f32,
+        text: String,
+        hint: Option<String>,
     },
     /// Speech ended; transcription or rewrite in progress.
-    Processing,
+    Processing {
+        text: String,
+    },
     /// Text was inserted (or placed on the clipboard).
     Result {
         text: String,
@@ -42,10 +46,11 @@ impl OverlayView {
         matches!(self, OverlayView::Hidden)
     }
 
-    /// Drawn as the bare dot indicator rather than a status card; a
-    /// successful insertion flashes the dot green instead of a card.
+    /// Drawn as the bare dot indicator rather than a status card. Only the
+    /// green insertion flash is a dot: listening and processing show the
+    /// live text in a card.
     pub fn is_dot(&self) -> bool {
-        matches!(self, OverlayView::Listening { .. } | OverlayView::Processing | OverlayView::Result { tone: Tone::Success, .. })
+        matches!(self, OverlayView::Result { tone: Tone::Success, .. })
     }
 }
 
@@ -74,10 +79,10 @@ mod tests {
     }
 
     #[test]
-    fn dot_views_cover_listening_processing_and_success() {
+    fn only_the_insert_flash_is_a_dot() {
         use super::{OverlayView, Tone};
-        assert!(OverlayView::Listening { level: 0.0 }.is_dot());
-        assert!(OverlayView::Processing.is_dot());
+        assert!(!OverlayView::Listening { level: 0.0, text: "hello".into(), hint: None }.is_dot(), "the live text must show in a card");
+        assert!(!OverlayView::Processing { text: String::new() }.is_dot());
         assert!(OverlayView::Result { text: "Inserted".into(), tone: Tone::Success, detail: None }.is_dot());
         assert!(!OverlayView::Result { text: "Copied to clipboard".into(), tone: Tone::Warning, detail: None }.is_dot());
         assert!(!OverlayView::Message { text: "No speech detected".into(), tone: Tone::Info }.is_dot());

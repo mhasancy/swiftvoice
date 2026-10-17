@@ -48,8 +48,8 @@ inserted text, and why it is fast.
   target application can never stall the UI or audio.
 
 All channels are bounded. Senders on the latency path use `try_send`. A full
-queue reports an error for that utterance instead of blocking the audio
-thread.
+queue drops partial (preview) jobs first. For final jobs it reports an
+error for that utterance instead of blocking the audio thread.
 
 ## From sound to text
 
@@ -80,6 +80,7 @@ thread.
      at that pause (its transcript is already running) and only the rest is
      transcribed. The work left after release is therefore about one
      phrase, however long you talked;
+   - `Snapshot(Partial)` every 700 ms while speaking, for the live overlay;
    - a hard cut at 16 s without any pause keeps memory and latency bounded
      and lands just before the quietest frame of the last 2 s, so the new
      window starts in a word gap instead of mid-word.
@@ -95,7 +96,8 @@ thread.
    at a pause it happened 1 time in 92. Context that begins at a pause
    avoids it.
 6. **Recogniser** (`asr::worker`): jobs for the same window supersede each
-   other. Only the longest queued Pause/Final job survives.
+   other. Only the longest queued Pause/Final job survives. Partial jobs
+   run only when nothing else is queued.
 7. **Engines.**
    - *Parakeet TDT* (`asr::parakeet`). A Rust NeMo log-mel front end:
      pre-emphasis 0.97, 25 ms Hann window in a 512-point FFT, 10 ms hop,
@@ -134,8 +136,11 @@ The default `method = "auto"`:
    `modifier_wait_ms` are released synthetically. A VK 0xE8 no-op key
    prevents Alt from opening a menu.
 2. **Check the target.**
-   - No focused window, or SwiftVoice's own window: the text goes to the
-     clipboard, with a notice.
+   - No focused window, SwiftVoice's own window, or focus somewhere that
+     cannot take text (the desktop, the taskbar, an icon or file list): the
+     text goes to the clipboard, with a notice. This check is deliberately
+     conservative — only cases where typing can never work are detected;
+     anything ambiguous is pasted.
    - The target runs elevated and SwiftVoice does not: Windows silently
      blocks synthetic input (UIPI). SwiftVoice detects this with
      `OpenProcessToken`/`TokenElevation` and puts the text on the clipboard,
@@ -154,7 +159,8 @@ The default `method = "auto"`:
      in the meantime.
 4. **Type.** `type_apps`, or a clipboard that cannot be snapshotted, gets
    the text as `KEYEVENTF_UNICODE` key events, which never touch the
-   clipboard.
+   clipboard. An app in `type_apps` also skips the check above, because
+   typing reaches apps that expose no text field to Windows.
 
 ## Why it is fast and light
 

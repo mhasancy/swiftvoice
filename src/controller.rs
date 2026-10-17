@@ -18,7 +18,7 @@ use crate::asr::catalog;
 use crate::asr::download;
 use crate::asr::worker::{AsrJob, WorkerConfig, WorkerEvent, WorkerMsg};
 use crate::audio::processor::VadChoice;
-use crate::audio::{AudioCmd, AudioEvent, CaptureSettings, SegEvent, SegmenterConfig, SessionMode, SessionParams, SnapKey};
+use crate::audio::{AudioCmd, AudioEvent, CaptureSettings, SegEvent, SegmenterConfig, SessionMode, SessionParams, SnapKey, SnapshotKind};
 use crate::config::{self, Config, HotkeyConfig, InsertMethod, PostMode, Setting};
 use crate::events::{AppEvent, DownloadEvent, HotkeyEvent, HotkeyKind, TrayCommand};
 use crate::insertion::{InsertOutcome, InsertReport, InsertRequest, InsertSettings, WindowHandle};
@@ -65,6 +65,7 @@ pub enum Stage {
     Waiting,
     Postprocessing,
     Ready,
+    Done,
 }
 
 struct Capture {
@@ -87,6 +88,7 @@ struct Utterance {
     results: HashMap<SnapKey, Result<String, String>>,
     commits: Vec<SnapKey>,
     end: Option<Option<SnapKey>>,
+    partial: Option<(SnapKey, String)>,
     stage: Stage,
     output: Option<Result<PostResult, String>>,
     ended_at: Option<Instant>,
@@ -350,16 +352,27 @@ impl<U: Ui, P: Ports> Controller<U, P> {
         let english = language == "en" || (language == "auto" && info.languages == ["en"]);
         let original = self.ui.foreground_window();
         let v = &self.cfg.vad;
+        let partials = self.cfg.overlay.enabled;
+        // Live overlay text: re-transcribe the audio so far every 700 ms of speech.
+        let partial_ms = partials.then_some(700);
         let seg = match mode {
-            SessionMode::PushToTalk => {
-                SegmenterConfig::from_ms(v.threshold, v.pause_ms, None, v.pre_roll_ms, self.cfg.asr.commit_after_secs, None, None)
-            }
+            SessionMode::PushToTalk => SegmenterConfig::from_ms(
+                v.threshold,
+                v.pause_ms,
+                None,
+                v.pre_roll_ms,
+                self.cfg.asr.commit_after_secs,
+                partial_ms,
+                None,
+                None,
+            ),
             SessionMode::Toggle { continuous } => SegmenterConfig::from_ms(
                 v.threshold,
                 v.pause_ms,
                 (v.endpoint_ms > 0).then_some(v.endpoint_ms),
                 v.pre_roll_ms,
                 self.cfg.asr.commit_after_secs,
+                partial_ms,
                 Some(v.no_speech_timeout_ms),
                 continuous.then_some(v.idle_stop_secs * 1000),
             ),
@@ -377,7 +390,11 @@ impl<U: Ui, P: Ports> Controller<U, P> {
             finishing: false,
         });
         self.ui.set_listening(true);
-        self.show(OverlayView::Listening { level: 0.0 }, None);
+        let hint = match self.models.get(&model) {
+            Some(ModelState::Loading) => Some("Loading the model; keep talking…".to_string()),
+            _ => None,
+        };
+        self.show(OverlayView::Listening { level: 0.0, text: String::new(), hint }, None);
     }
 
     fn end_capture(&mut self) {
@@ -395,7 +412,8 @@ impl<U: Ui, P: Ports> Controller<U, P> {
             }
             AudioEvent::Level { session, level } => {
                 if self.capture.as_ref().map(|c| c.session) == Some(session) && self.cfg.overlay.enabled {
-                    self.ui.overlay(OverlayView::Listening { level }, None);
+                    let text = self.live_text(session);
+                    self.ui.overlay(OverlayView::Listening { level, text, hint: None }, None);
                 }
             }
             AudioEvent::Seg { session, event } => self.on_seg(session, event),
@@ -455,6 +473,7 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                     results: HashMap::new(),
                     commits: Vec::new(),
                     end: None,
+                    partial: None,
                     stage: Stage::Capturing,
                     output: None,
                     ended_at: None,
@@ -473,7 +492,7 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                     language: u.language.clone(),
                     enqueued: Instant::now(),
                 };
-                if !self.ports.asr(WorkerMsg::Job(job)) {
+                if !self.ports.asr(WorkerMsg::Job(job)) && s.kind != SnapshotKind::Partial {
                     if let Some(u) = self.utterances.get_mut(&(session, s.key.utterance)) {
                         u.results.insert(s.key, Err("the recogniser queue is full".into()));
                     }
@@ -492,7 +511,8 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                     u.ended_at = Some(Instant::now());
                 }
                 if !continuous {
-                    self.show(OverlayView::Processing, None);
+                    let text = self.live_text(session);
+                    self.show(OverlayView::Processing { text }, None);
                 }
                 self.try_complete(session, utterance);
             }
@@ -505,6 +525,25 @@ impl<U: Ui, P: Ports> Controller<U, P> {
         }
     }
 
+    /// Committed text plus the newest partial for the live overlay.
+    fn live_text(&self, session: u64) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for ((s, _), u) in self.utterances.range((session, 0)..=(session, u32::MAX)) {
+            if *s != session || u.stage == Stage::Done {
+                continue;
+            }
+            for k in &u.commits {
+                if let Some(Ok(t)) = u.results.get(k) {
+                    parts.push(t.clone());
+                }
+            }
+            if let Some((_, t)) = &u.partial {
+                parts.push(t.clone());
+            }
+        }
+        tail_text(crate::postprocess::join_windows(parts.iter().map(String::as_str)).trim(), 120)
+    }
+
     // ----- recogniser events ---------------------------------------------
 
     fn on_asr(&mut self, ev: WorkerEvent) {
@@ -512,8 +551,28 @@ impl<U: Ui, P: Ports> Controller<U, P> {
             WorkerEvent::Output(o) => {
                 let key = (o.session, o.key.utterance);
                 let Some(u) = self.utterances.get_mut(&key) else { return };
+                if o.kind == SnapshotKind::Partial {
+                    if let Ok(text) = o.result {
+                        let newer = u.partial.as_ref().map(|(k, _)| o.key.window > k.window || o.key.end >= k.end).unwrap_or(true);
+                        let committed_ahead = u.commits.iter().any(|c| c.window >= o.key.window);
+                        if newer && !committed_ahead {
+                            u.partial = Some((o.key, text));
+                        }
+                    }
+                    if self.capture.as_ref().map(|c| c.session) == Some(o.session) && self.cfg.overlay.enabled {
+                        let text = self.live_text(o.session);
+                        self.ui.overlay(OverlayView::Listening { level: -1.0, text, hint: None }, None);
+                    }
+                    return;
+                }
                 u.results.insert(o.key, o.result);
                 self.try_complete(key.0, key.1);
+                if self.capture.as_ref().map(|c| c.session) == Some(o.session) && self.cfg.overlay.enabled {
+                    let text = self.live_text(o.session);
+                    if !text.is_empty() {
+                        self.ui.overlay(OverlayView::Listening { level: -1.0, text, hint: None }, None);
+                    }
+                }
             }
             WorkerEvent::ModelLoading { model } => {
                 self.models.insert(model, ModelState::Loading);
@@ -595,7 +654,7 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                     self.next_insert += 1;
                     let still_listening = self.capture.as_ref().map(|c| c.session) == Some(key.0);
                     if !still_listening {
-                        self.show(OverlayView::Processing, None);
+                        self.show(OverlayView::Processing { text: tail_text(&result.text, 120) }, None);
                     }
                     self.ports.insert(InsertRequest {
                         id,
@@ -923,7 +982,7 @@ mod tests {
 
     use super::*;
     use crate::audio::capture::{CaptureError, CaptureErrorKind};
-    use crate::audio::{EndReason, Snapshot, SnapshotKind};
+    use crate::audio::{EndReason, Snapshot};
     use crate::postprocess::PostResult;
 
     #[derive(Default)]
@@ -1252,12 +1311,14 @@ mod tests {
     }
 
     #[test]
-    fn level_events_move_the_dot() {
+    fn partial_results_update_the_overlay() {
         let (mut c, log, dir) = setup(PostMode::Clean);
-        c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
-        c.handle(AppEvent::Audio(AudioEvent::Level { session: 1, level: 0.5 }));
+        c.handle(AppEvent::Hotkey(HotkeyEvent::PttDown));
+        c.handle(seg(1, SegEvent::SpeechStart { utterance: 0 }));
+        c.handle(snap(1, 0, 0, 8000, SnapshotKind::Partial));
+        c.handle(output(1, 0, 0, 8000, SnapshotKind::Partial, "hello wor"));
         let last = log.0.borrow().overlay.last().cloned().unwrap();
-        assert!(matches!(last, OverlayView::Listening { level } if (level - 0.5).abs() < f32::EPSILON), "{last:?}");
+        assert!(matches!(last, OverlayView::Listening { ref text, .. } if text == "hello wor"), "{last:?}");
         let _ = std::fs::remove_dir_all(dir);
     }
 
