@@ -106,8 +106,9 @@ thread.
      which makes decoding cheaper than RNN-T.
    - *NeMo CTC* (`asr::nemo_ctc`) for the 110M model.
    - *Whisper* via whisper.cpp (`asr::whisper`, `whisper-rs`) for languages
-     Parakeet lacks, such as Bengali. It is compiled in by the default
-     `whisper` feature.
+     Parakeet lacks, such as Bengali. It is an opt-in cargo feature
+     (`--features whisper`); the Windows build script and the release zip
+     include it.
 8. **Post-processing** (`postprocess`):
    - *Raw*: the model's text.
    - *Clean* (default, < 0.2 ms): custom vocabulary and voice commands

@@ -64,11 +64,6 @@ fn names<const N: usize>(v: Vec<String>, what: &str) -> Result<[String; N]> {
 }
 
 impl ParakeetTdt {
-    /// True if `dir` looks like a Parakeet TDT transducer export.
-    pub fn detect(dir: &Path) -> bool {
-        find_file(dir, &["joiner.int8.onnx", "joiner.onnx"]).is_ok() && dir.join("tokens.txt").is_file()
-    }
-
     pub fn load(dir: &Path, threads: u32) -> Result<ParakeetTdt> {
         let encoder_path = find_file(dir, &["encoder.int8.onnx", "encoder.onnx"])?;
         let decoder_path = find_file(dir, &["decoder.int8.onnx", "decoder.onnx"])?;

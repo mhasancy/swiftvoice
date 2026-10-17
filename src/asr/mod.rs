@@ -111,23 +111,9 @@ fn load_whisper(dir: &Path, threads: u32, prompt: &str) -> Result<Box<dyn Speech
 
 #[cfg(not(feature = "whisper"))]
 fn load_whisper(_dir: &Path, _threads: u32, _prompt: &str) -> Result<Box<dyn SpeechEngine>> {
-    bail!("this build of SwiftVoice was compiled without the whisper.cpp engine (cargo feature \"whisper\")")
-}
-
-/// Guess the engine of a user-supplied model folder.
-pub fn detect_engine(dir: &Path) -> Option<EngineKind> {
-    if parakeet::ParakeetTdt::detect(dir) {
-        Some(EngineKind::ParakeetTdt)
-    } else if nemo_ctc::NemoCtc::detect(dir) {
-        Some(EngineKind::NemoCtc)
-    } else if std::fs::read_dir(dir).ok()?.flatten().any(|e| {
-        let n = e.file_name().to_string_lossy().into_owned();
-        n.starts_with("ggml-") && n.ends_with(".bin")
-    }) {
-        Some(EngineKind::Whisper)
-    } else {
-        None
-    }
+    bail!(
+        "this build of SwiftVoice was compiled without the whisper.cpp engine (cargo feature \"whisper\"; rebuild with --features whisper)"
+    )
 }
 
 #[cfg(test)]

@@ -36,7 +36,7 @@ jobs:
       - name: Format
         run: cargo fmt --check
       - name: Clippy (with whisper.cpp)
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: cargo clippy --all-targets --locked --features whisper -- -D warnings
       # Builds release, runs the tests, downloads and verifies ONNX Runtime 1.31.0,
       # copies the VC++ runtime, packages dist\SwiftVoice and smoke-tests the
       # packaged swiftvoice.exe / swiftvoice.com (ONNX Runtime loads, telemetry off).
