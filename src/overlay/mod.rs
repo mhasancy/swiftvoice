@@ -18,16 +18,12 @@ pub enum Tone {
 #[derive(Debug, Clone, PartialEq)]
 pub enum OverlayView {
     Hidden,
-    /// Recording; `text` is the live partial transcript (may be empty).
+    /// Recording; drawn as the level dot.
     Listening {
         level: f32,
-        text: String,
-        hint: Option<String>,
     },
     /// Speech ended; transcription or rewrite in progress.
-    Processing {
-        text: String,
-    },
+    Processing,
     /// Text was inserted (or placed on the clipboard).
     Result {
         text: String,
@@ -49,7 +45,7 @@ impl OverlayView {
     /// Drawn as the bare dot indicator rather than a status card; a
     /// successful insertion flashes the dot green instead of a card.
     pub fn is_dot(&self) -> bool {
-        matches!(self, OverlayView::Listening { .. } | OverlayView::Processing { .. } | OverlayView::Result { tone: Tone::Success, .. })
+        matches!(self, OverlayView::Listening { .. } | OverlayView::Processing | OverlayView::Result { tone: Tone::Success, .. })
     }
 }
 
@@ -80,8 +76,8 @@ mod tests {
     #[test]
     fn dot_views_cover_listening_processing_and_success() {
         use super::{OverlayView, Tone};
-        assert!(OverlayView::Listening { level: 0.0, text: String::new(), hint: None }.is_dot());
-        assert!(OverlayView::Processing { text: String::new() }.is_dot());
+        assert!(OverlayView::Listening { level: 0.0 }.is_dot());
+        assert!(OverlayView::Processing.is_dot());
         assert!(OverlayView::Result { text: "Inserted".into(), tone: Tone::Success, detail: None }.is_dot());
         assert!(!OverlayView::Result { text: "Copied to clipboard".into(), tone: Tone::Warning, detail: None }.is_dot());
         assert!(!OverlayView::Message { text: "No speech detected".into(), tone: Tone::Info }.is_dot());

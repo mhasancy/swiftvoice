@@ -594,7 +594,7 @@ mod tests {
         assert!(warning.is_none(), "the energy VAD needs no model file: {warning:?}");
 
         // The third silent frame (~90 ms) trips the no-speech rule.
-        let seg = SegmenterConfig::from_ms(0.5, 192, None, 0, 12, None, Some(90), None);
+        let seg = SegmenterConfig::from_ms(0.5, 192, None, 0, 12, Some(90), None);
         let processor = FrameProcessor::new(48_000, settings.gain_db, settings.noise_suppression, vad, seg);
 
         let sink: AudioSink = Box::new(|_| {});

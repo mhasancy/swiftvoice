@@ -46,8 +46,6 @@ language = "auto"                               # "auto", "en", "de", "bn", ...
 fallback_model = "whisper-large-v3-turbo-q5_0"  # for languages the model lacks
 threads = 0                # 0 = automatic
 low_memory = true          # ~250 MB less RAM for Parakeet 0.6B, ~10-15% slower
-partial_results = true     # live preview in the overlay
-partial_interval_ms = 700
 commit_after_secs = 6      # commit at the next pause after this (shorter = faster)
 unload_after_idle_secs = 0 # 0 = keep the model loaded (fastest)
 warm_up = true
@@ -92,7 +90,6 @@ type_apps = []             # e.g. ["game.exe"] always receive typed text
 
 [overlay]
 enabled = true
-show_partials = true
 position = "bottom"        # bottom | top
 opacity = 0.94
 hide_after_ms = 900

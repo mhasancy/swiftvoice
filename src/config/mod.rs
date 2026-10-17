@@ -161,9 +161,9 @@ pub struct AsrConfig {
     /// needs ~250 MB less RAM and loads faster; transcription is ~10-15%
     /// slower (docs/BENCHMARKS.md).
     pub low_memory: bool,
-    /// Show live partial transcripts in the overlay.
+    /// Accepted for old config files; the overlay live preview was removed.
     pub partial_results: bool,
-    /// Minimum time between partial transcripts.
+    /// Accepted for old config files; the overlay live preview was removed.
     pub partial_interval_ms: u32,
     /// Commit dictation at the next pause after this many seconds, so each
     /// transcription (and the wait after you stop) stays short.
@@ -361,6 +361,7 @@ pub enum OverlayPosition {
 #[serde(default, deny_unknown_fields)]
 pub struct OverlayConfig {
     pub enabled: bool,
+    /// Accepted for old config files; the overlay live preview was removed.
     pub show_partials: bool,
     pub position: OverlayPosition,
     /// 0.3 ..= 1.0
@@ -459,7 +460,6 @@ impl Config {
             errs.push(format!("asr.language = \"{}\" must be \"auto\" or a two- or three-letter language code", self.asr.language));
         }
         range_u32(&mut errs, "asr.threads", self.asr.threads, 0, 64);
-        range_u32(&mut errs, "asr.partial_interval_ms", self.asr.partial_interval_ms, 200, 10_000);
         range_u32(&mut errs, "asr.commit_after_secs", self.asr.commit_after_secs, 4, 25);
         range_u32(&mut errs, "postprocess.smart.timeout_ms", self.postprocess.smart.timeout_ms, 200, 60_000);
         range_f32(&mut errs, "postprocess.smart.temperature", self.postprocess.smart.temperature, 0.0, 2.0);

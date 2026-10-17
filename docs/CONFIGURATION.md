@@ -100,8 +100,6 @@ shortcut is checked against other programs before it is saved.
 | `fallback_model` | `"whisper-large-v3-turbo-q5_0"` | a Whisper id | used for languages Parakeet does not support (e.g. Bengali) |
 | `threads` | `0` | 0 … 64 | inference threads; 0 = automatic (one per physical core) |
 | `low_memory` | `true` | bool | skip ONNX Runtime weight pre-packing for large models: about 250 MB less RAM for the 0.6B models, 10-15 % slower transcription (docs/BENCHMARKS.md) |
-| `partial_results` | `true` | bool | live preview transcription while you speak |
-| `partial_interval_ms` | `700` | 200 … 10000 | how often the preview updates |
 | `commit_after_secs` | `6` | 4 … 25 | commit dictation at the next pause after this many seconds; shorter means less work after you stop, longer gives the model more context |
 | `unload_after_idle_secs` | `0` | 0 = never | drop the model after this much idle time and return the memory (57-74 MB remained in the Linux benchmark); the next dictation reloads it (1.5-3.5 s) |
 | `warm_up` | `true` | bool | run one silent inference after loading so the first dictation is fast |
@@ -161,7 +159,6 @@ That is why Smart mode is opt-in, and why `timeout_ms` caps the wait.
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | small click-through status window (it never takes focus) |
-| `show_partials` | `true` | compute live partial transcripts while dictating |
 | `position` | `"bottom"` | bottom or top of the monitor that shows the focused window |
 | `opacity` | `0.94` | 0.3 … 1.0 |
 | `hide_after_ms` | `900` | 0 … 10000; how long the result stays visible |

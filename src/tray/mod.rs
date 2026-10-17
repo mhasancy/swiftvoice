@@ -210,7 +210,6 @@ pub fn build_menu(s: &MenuState) -> Vec<MenuEntry> {
     }
     options.push(MenuEntry::Separator);
     options.push(check("Show overlay", TrayCommand::ToggleOverlay, cfg.overlay.enabled));
-    options.push(check("Live partial text", TrayCommand::TogglePartials, cfg.overlay.show_partials && cfg.asr.partial_results));
     options.push(check("Keep listening after each utterance (toggle mode)", TrayCommand::ToggleContinuous, cfg.vad.continuous));
     m.push(MenuEntry::Submenu { label: "Options".into(), items: options, enabled: true });
 
