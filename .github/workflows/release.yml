@@ -40,4 +40,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $zip = Get-ChildItem dist/*.zip | Select-Object -First 1
-          gh release create $env:GITHUB_REF_NAME $zip.FullName --title $env:GITHUB_REF_NAME --generate-notes
+          # Also attach the bare program: updating an existing install is
+          # copying this single file over SwiftVoice\swiftvoice.exe.
+          $exe = Copy-Item dist/SwiftVoice/swiftvoice.exe "dist/SwiftVoice-$($env:GITHUB_REF_NAME.TrimStart('v'))-win-x64.exe" -PassThru
+          gh release create $env:GITHUB_REF_NAME $zip.FullName $exe.FullName --title $env:GITHUB_REF_NAME --generate-notes

@@ -46,11 +46,23 @@ impl OverlayView {
         matches!(self, OverlayView::Hidden)
     }
 
-    /// Drawn as the bare dot indicator rather than a status card. Only the
-    /// green insertion flash is a dot: listening and processing show the
-    /// live text in a card.
-    pub fn is_dot(&self) -> bool {
-        matches!(self, OverlayView::Result { tone: Tone::Success, .. })
+    /// The overlay is always drawn as a bare dot, never a text card; this is
+    /// the dot's color. `Hidden` maps to the transparent key 0 (invisible).
+    pub fn dot_color(&self) -> u32 {
+        fn rgb(r: u32, g: u32, b: u32) -> u32 {
+            r | g << 8 | b << 16
+        }
+        match self {
+            OverlayView::Hidden => 0,
+            OverlayView::Listening { .. } => rgb(0xFF, 0x45, 0x3A),
+            OverlayView::Processing { .. } => rgb(0xFF, 0xB0, 0x20),
+            OverlayView::Result { tone, .. } | OverlayView::Message { tone, .. } => match tone {
+                Tone::Info => rgb(0x4C, 0x9A, 0xFF),
+                Tone::Success => rgb(0x3D, 0xD6, 0x8C),
+                Tone::Warning => rgb(0xFF, 0xB0, 0x20),
+                Tone::Error => rgb(0xFF, 0x5A, 0x52),
+            },
+        }
     }
 }
 
@@ -79,13 +91,19 @@ mod tests {
     }
 
     #[test]
-    fn only_the_insert_flash_is_a_dot() {
+    fn every_state_is_a_dot_with_distinct_result_colors() {
         use super::{OverlayView, Tone};
-        assert!(!OverlayView::Listening { level: 0.0, text: "hello".into(), hint: None }.is_dot(), "the live text must show in a card");
-        assert!(!OverlayView::Processing { text: String::new() }.is_dot());
-        assert!(OverlayView::Result { text: "Inserted".into(), tone: Tone::Success, detail: None }.is_dot());
-        assert!(!OverlayView::Result { text: "Copied to clipboard".into(), tone: Tone::Warning, detail: None }.is_dot());
-        assert!(!OverlayView::Message { text: "No speech detected".into(), tone: Tone::Info }.is_dot());
-        assert!(!OverlayView::Hidden.is_dot());
+        assert_eq!(OverlayView::Hidden.dot_color(), 0, "hidden draws nothing");
+        let listening = OverlayView::Listening { level: 0.0, text: "hello".into(), hint: None };
+        let processing = OverlayView::Processing { text: "hello".into() };
+        let inserted = OverlayView::Result { text: "Inserted".into(), tone: Tone::Success, detail: None };
+        let copied = OverlayView::Result { text: "Copied to clipboard".into(), tone: Tone::Warning, detail: None };
+        let failed = OverlayView::Message { text: "No speech detected".into(), tone: Tone::Error };
+        for v in [&listening, &processing, &inserted, &copied, &failed] {
+            assert_ne!(v.dot_color(), 0, "{v:?}");
+        }
+        assert_ne!(inserted.dot_color(), copied.dot_color(), "inserted and copied flash in different colors");
+        assert_ne!(inserted.dot_color(), failed.dot_color());
+        assert_ne!(copied.dot_color(), failed.dot_color());
     }
 }
