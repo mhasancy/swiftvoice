@@ -1,10 +1,16 @@
 //! Windows implementations of [`Desktop`] and [`ClipboardBackend`].
 
+use std::cell::RefCell;
 use std::ptr::null_mut;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
+use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern, UIA_ComboBoxControlTypeId, UIA_DocumentControlTypeId,
+    UIA_EditControlTypeId, UIA_ValuePatternId, UIA_CONTROLTYPE_ID,
+};
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, GlobalFree, ERROR_ACCESS_DENIED, HANDLE, HWND};
 use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows_sys::Win32::System::DataExchange::{
@@ -39,6 +45,21 @@ const SWIFTVOICE_TAG: usize = 0x5357_5643;
 /// An unassigned virtual key; tapping it while Alt or Win is held keeps
 /// Windows from opening a menu or Start when they are released.
 const VK_MASK: u16 = 0xE8;
+
+/// Window classes that take a paste but expose no text element, because the
+/// program draws its own text. Compared lowercased.
+const TERMINAL_CLASSES: &[&str] = &[
+    "consolewindowclass",            // cmd, PowerShell in conhost
+    "cascadia_hosting_window_class", // Windows Terminal
+    "mintty",
+    "putty",
+    "alacritty",
+    "org.wezfurlong.wezterm",
+];
+
+/// Focus classes that are text fields no matter what else reports them.
+const TEXT_FOCUS_CLASSES: &[&str] =
+    &["Edit", "RichEdit", "RichEdit20A", "RichEdit20W", "RichEdit50W", "RichEditD2DPT", "RICHEDIT", "RICHEDIT50W", "Scintilla"];
 
 fn key(vk: u16, flags: u32) -> INPUT {
     // SAFETY: plain Win32 call.
@@ -149,6 +170,67 @@ unsafe fn class_name(hwnd: HWND) -> String {
     String::from_utf16_lossy(&buf[..n.max(0) as usize])
 }
 
+thread_local! {
+    /// The UI Automation client, created on first use on the inserter thread.
+    /// `None` when it is unavailable, so detection keeps the old
+    /// paste-on-ambiguity behaviour.
+    static UIA: RefCell<Option<IUIAutomation>> = const { RefCell::new(None) };
+}
+
+fn uia() -> Option<IUIAutomation> {
+    UIA.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            // SAFETY: plain COM initialisation on this thread; a thread that
+            // was already initialised just reports RPC_E_CHANGED_MODE.
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                *slot = CoCreateInstance(&CUIAutomation, None::<&windows::core::IUnknown>, CLSCTX_INPROC_SERVER).ok();
+            }
+        }
+        slot.clone()
+    })
+}
+
+/// Whether the element that holds the keyboard focus is a place dictated
+/// text can go, according to UI Automation. `None` when UIA cannot answer.
+///
+/// Win32 focus stops at the app's own window: Chromium, Electron and WinUI
+/// apps host their text fields inside a window whose class says nothing
+/// (`Chrome_WidgetWin_1`, `DirectUIHWND`, ...). UIA sees the real element, so
+/// a page body, a chat pane or a file list is told apart from a text field.
+fn uia_focused_reads_text() -> Option<bool> {
+    let uia = uia()?;
+    // SAFETY: plain UIA client calls; an inaccessible element is an error.
+    unsafe {
+        let element = uia.GetFocusedElement().ok()?;
+        let control_type = element.CurrentControlType().ok()?;
+        Some(textable(control_type, value_is_read_only(&element)))
+    }
+}
+
+/// The read-only flag of the focused element's Value pattern, if it has one.
+fn value_is_read_only(element: &IUIAutomationElement) -> Option<bool> {
+    // SAFETY: plain UIA client call; an unsupported pattern returns an error.
+    let pattern: IUIAutomationValuePattern = unsafe { element.GetCurrentPatternAs(UIA_ValuePatternId) }.ok()?;
+    unsafe { pattern.CurrentIsReadOnly() }.ok().map(|b| b.as_bool())
+}
+
+/// Only a real editable text control can take dictated text:
+/// - `Edit` and `ComboBox` are text fields; a read-only one cannot take it;
+/// - a `Document` is an editor only when it is writable (a web page body,
+///   a PDF viewer or a read-only view reports itself read-only);
+/// - everything else - panes, lists, buttons, the window itself - cannot.
+fn textable(control_type: UIA_CONTROLTYPE_ID, read_only: Option<bool>) -> bool {
+    if control_type == UIA_EditControlTypeId || control_type == UIA_ComboBoxControlTypeId {
+        read_only != Some(true)
+    } else if control_type == UIA_DocumentControlTypeId {
+        read_only == Some(false)
+    } else {
+        false
+    }
+}
+
 impl Desktop for WinDesktop {
     fn foreground(&self) -> Option<WindowInfo> {
         unsafe {
@@ -173,10 +255,16 @@ impl Desktop for WinDesktop {
             if fg.is_null() {
                 return None; // covered by the no-focus fallback in `Inserter::insert`
             }
+            let fg_class = class_name(fg);
             // The desktop, the taskbar and their icon lists never hold a text
             // field; anything typed there can only be lost.
-            if matches!(class_name(fg).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
+            if matches!(fg_class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
                 return Some(false);
+            }
+            // Terminals draw their own text and take a paste no matter which
+            // element holds the keyboard focus inside them.
+            if TERMINAL_CLASSES.contains(&fg_class.to_ascii_lowercase().as_str()) {
+                return Some(true);
             }
             let mut pid = 0u32;
             let thread = GetWindowThreadProcessId(fg, &mut pid);
@@ -187,10 +275,21 @@ impl Desktop for WinDesktop {
             }
             // No control holds the keyboard focus, or an icon/file list does:
             // nothing in that window can receive text.
-            if gti.hwndFocus.is_null() || class_name(gti.hwndFocus) == "SysListView32" {
+            if gti.hwndFocus.is_null() {
                 return Some(false);
             }
-            None
+            let focus_class = class_name(gti.hwndFocus);
+            if focus_class == "SysListView32" {
+                return Some(false);
+            }
+            if TEXT_FOCUS_CLASSES.contains(&focus_class.as_str()) {
+                return Some(true);
+            }
+            // Windows only names the app's own window here; ask UI Automation
+            // what exactly has focus, so a page, chat pane or file list
+            // without a text field ends up on the clipboard instead of being
+            // pasted into a void and lost.
+            uia_focused_reads_text()
         }
     }
 
@@ -487,5 +586,26 @@ impl ClipboardBackend for WinClipboard {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::UI::Accessibility::{UIA_ListItemControlTypeId, UIA_PaneControlTypeId, UIA_TextControlTypeId};
+
+    #[test]
+    fn only_editable_text_controls_take_dictated_text() {
+        assert!(textable(UIA_EditControlTypeId, Some(false)));
+        assert!(textable(UIA_EditControlTypeId, None), "an edit without a value pattern is still an edit");
+        assert!(!textable(UIA_EditControlTypeId, Some(true)), "a read-only field cannot take text");
+        assert!(textable(UIA_ComboBoxControlTypeId, Some(false)));
+        assert!(!textable(UIA_ComboBoxControlTypeId, Some(true)));
+        assert!(textable(UIA_DocumentControlTypeId, Some(false)), "a writable document is a text field");
+        assert!(!textable(UIA_DocumentControlTypeId, Some(true)), "a web page body reports itself read-only");
+        assert!(!textable(UIA_DocumentControlTypeId, None), "a document with no value pattern is not an editor");
+        assert!(!textable(UIA_PaneControlTypeId, None));
+        assert!(!textable(UIA_ListItemControlTypeId, None));
+        assert!(!textable(UIA_TextControlTypeId, None));
     }
 }

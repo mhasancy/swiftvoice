@@ -139,10 +139,15 @@ The default `method = "auto"`:
    prevents Alt from opening a menu.
 2. **Check the target.**
    - No focused window, SwiftVoice's own window, or focus somewhere that
-     cannot take text (the desktop, the taskbar, an icon or file list): the
-     text goes to the clipboard, with a notice. This check is deliberately
-     conservative — only cases where typing can never work are detected;
-     anything ambiguous is pasted.
+     cannot take text (the desktop, the taskbar, a file list, or a focused
+     element that is no text field): the text goes to the clipboard, with a
+     notice. Which element has focus is asked of UI Automation, because
+     Chromium, Electron and WinUI apps hide their text fields inside a
+     window class that names nothing; terminals, which draw their own text,
+     stay writable. Where UI Automation cannot answer, the check stays
+     deliberately conservative — only cases where typing can never work are
+     detected; anything ambiguous is pasted, and an explicit
+     `method = "paste"` skips the check altogether.
    - The target runs elevated and SwiftVoice does not: Windows silently
      blocks synthetic input (UIPI). SwiftVoice detects this with
      `OpenProcessToken`/`TokenElevation` and puts the text on the clipboard,

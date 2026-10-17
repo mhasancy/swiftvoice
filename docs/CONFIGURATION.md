@@ -146,7 +146,7 @@ That is why Smart mode is opt-in, and why `timeout_ms` caps the wait.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `method` | `"auto"` | `auto`: paste through the clipboard and restore it, typing instead when the clipboard is unavailable. `paste`: always paste. `type`: Unicode key events, never touches the clipboard (slower for long text; some apps, games and remote desktops handle it better) |
+| `method` | `"auto"` | `auto`: paste through the clipboard and restore it, typing instead when the clipboard is unavailable. `paste`: always paste, even where Windows sees no text field. `type`: Unicode key events, never touches the clipboard (slower for long text; some apps, games and remote desktops handle it better) |
 | `target` | `"focused"` | `focused`: the window focused when the text is ready. `original`: the window focused when dictation started; if it is gone, the text stays on the clipboard |
 | `append_space` | `true` | add a space after the inserted text (unless it ends with a space or new line), so the next dictation does not run into it |
 | `restore_clipboard` | `true` | put your previous clipboard back after pasting, unless something else changed it meanwhile |
@@ -162,7 +162,7 @@ That is why Smart mode is opt-in, and why `timeout_ms` caps the wait.
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | small click-through dot (it never takes focus) |
-| `position` | `"bottom"` | the dot's corner on the monitor that shows the focused window: `bottom` and `top` are the left corners, `bottom-left` and `top-left` say so explicitly |
+| `position` | `"bottom"` | the dot's spot on the monitor that shows the focused window: `left` is the middle of the left edge; `bottom` and `top` are the left corners, `bottom-left` and `top-left` say so explicitly |
 | `opacity` | `0.94` | 0.0 … 1.0; alpha of the dot |
 | `hide_after_ms` | `900` | 0 … 10000; how long a result flash stays visible |
 
@@ -170,8 +170,11 @@ The overlay is a bare dot, never a text card. It is red while you dictate
 (its size follows your voice), amber while the text is recognised, and
 then it flashes `hide_after_ms` in the result's color: green when the text
 was inserted, amber when nothing could take it and it went to the
-clipboard instead (no focused window, the desktop, the taskbar, an icon or
-file list), red for an error. Notices from the app use the same dot.
+clipboard instead (no focused window, the desktop, the taskbar, a file
+list, or a focused element that is no text field - UI Automation sees
+through Chromium, Electron and WinUI windows, whose text fields hide
+behind a window class that names nothing), red for an error. Notices from
+the app use the same dot.
 
 ## Vocabulary (`vocabulary.toml`)
 

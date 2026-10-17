@@ -36,7 +36,7 @@ timings.
 
 | # | Steps | Expected |
 |---|---|---|
-| B1 | Focus Notepad. Hold **Ctrl+Alt+Space**, say "testing one two three", release. | The red dot appears in its corner (its size follows your voice); no text card is ever shown. Then the text appears in Notepad: "Testing one two three." A bare green dot flashes where the dot was and disappears. |
+| B1 | Focus Notepad. Hold **Ctrl+Alt+Space**, say "testing one two three", release. | The red dot appears in its spot (its size follows your voice); no text card is ever shown. Then the text appears in Notepad: "Testing one two three." A bare green dot flashes where the dot was and disappears. |
 | B2 | Tap Ctrl+Alt+Space briefly (< 180 ms). | Nothing is inserted (accidental tap). |
 | B3 | Press **Ctrl+Alt+V**, speak a sentence, stop talking. | Text appears about 0.8 s after you stop (endpoint), listening ends. |
 | B4 | Ctrl+Alt+V, speak, press **Escape** before the endpoint. | Nothing is inserted (the dot simply disappears). Escape works normally in other apps again afterwards (it is registered only while listening). |
@@ -46,7 +46,7 @@ timings.
 | B8 | Hold push-to-talk while saying a word and release mid-word. | The last word is complete: recording continues for `release_tail_ms`. |
 | B9 | Hotkey while a full-screen game or an elevated window is focused. | Dictation works or a notice explains why the text is on the clipboard (see C5). |
 | B10 | In the change dialog, press and release **Right Alt** on its own. | The dialog accepts it as the shortcut ("RAlt"); the new key dictates. |
-| B11 | Set `toggle = "RAlt"` and `vad.endpoint_ms = 0` in `config.toml`, save. Press Right Alt, speak with several pauses, press Right Alt again. | The first press starts (the red dot appears in its corner); pauses never stop it; the second press inserts everything at once. Right Alt reaches no other app while SwiftVoice runs (on AltGr layouts that disables AltGr). Escape still cancels. |
+| B11 | Set `toggle = "RAlt"` and `vad.endpoint_ms = 0` in `config.toml`, save. Press Right Alt, speak with several pauses, press Right Alt again. | The first press starts (the red dot appears in its spot); pauses never stop it; the second press inserts everything at once. Right Alt reaches no other app while SwiftVoice runs (on AltGr layouts that disables AltGr). Escape still cancels. |
 
 ## C. Insertion
 
@@ -62,7 +62,7 @@ timings.
 | C8 | `target = "original"`, start toggle dictation in Notepad, click into WordPad before it ends | Text goes to Notepad (window active at start), or to the clipboard (the dot flashes amber) if Notepad was closed. |
 | C9 | Say "first line new line second line new paragraph open bracket aside close bracket" | `First line⏎Second line⏎⏎(Aside)` in Clean mode (unit test `voice_commands_give_structure_in_clean_mode`). |
 | C10 | Mode Raw | Exact model output, no filler removal or vocabulary. |
-| C11 | Click an empty spot on the desktop, or the taskbar; or click an icon in a folder in File Explorer; dictate | Nothing is typed; the dot flashes amber and the dictated text replaces the previous clipboard content (it is not restored). Ctrl+V in any app pastes the sentence. A game with no text field still receives typed text when its exe is listed in `insertion.type_apps`. |
+| C11 | Click an empty spot on the desktop, or the taskbar; or click an icon in a folder in File Explorer; or click the surrounding page/chat area of an app like a browser or opencode so no text field has the cursor; dictate | Nothing is typed; the dot flashes amber and the dictated text replaces the previous clipboard content (it is not restored). Ctrl+V in any app pastes the sentence. A game with no text field still receives typed text when its exe is listed in `insertion.type_apps`, and `insertion.method = "paste"` forces a paste everywhere. |
 
 ## D. Audio and devices
 
