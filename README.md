@@ -48,11 +48,12 @@ targets, are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ### From a release zip
 
-1. Unzip `SwiftVoice-<version>-win-x64.zip` anywhere, for example
-   `%LOCALAPPDATA%\Programs\SwiftVoice`.
-2. Run `swiftvoice.exe`. A microphone icon appears in the notification
+1. Download the latest `SwiftVoice-<version>-win-x64.zip` from the
+   [Releases](https://github.com/mhasancy/swiftvoice/releases) page.
+2. Unzip it anywhere, for example `%LOCALAPPDATA%\Programs\SwiftVoice`.
+3. Run `swiftvoice.exe`. A microphone icon appears in the notification
    area.
-3. The first run offers to download the speech model (465 MB for the
+4. The first run offers to download the speech model (465 MB for the
    default). Accept it, or choose another model under *Engine & model*.
 
 The zip contains:
