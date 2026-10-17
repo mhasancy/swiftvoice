@@ -6,6 +6,8 @@
 //! * Pause/Final jobs for the same `(session, utterance, window)` supersede
 //!   each other: only the longest one is still needed, so older queued ones
 //!   are dropped unprocessed.
+//! * Partial jobs (overlay preview) run only when nothing else is queued,
+//!   and only the newest partial per session is kept.
 //! * Jobs of a cancelled session are discarded.
 //!
 //! The job channel is bounded; the audio side never blocks on it.
@@ -86,10 +88,12 @@ pub struct WorkerHandle {
 }
 
 impl WorkerHandle {
-    /// Queue a message without blocking; a dropped message is reported.
+    /// Queue a message without blocking. Partial jobs are dropped when the
+    /// queue is full; anything else is reported.
     pub fn send(&self, msg: WorkerMsg) -> bool {
         match self.tx.try_send(msg) {
             Ok(()) => true,
+            Err(TrySendError::Full(WorkerMsg::Job(j))) if j.kind == SnapshotKind::Partial => false,
             Err(TrySendError::Full(_)) => {
                 log::error!("recogniser queue is full; a request was dropped");
                 false
@@ -227,16 +231,32 @@ impl Worker {
         true
     }
 
-    /// Apply the supersede rule and pop the job to run.
+    /// Apply the supersede/priority rules and pop the job to run.
     fn next_job(&mut self) -> Option<AsrJob> {
         // Drop Pause/Final jobs superseded by a longer one for the same window.
         let snapshot = self.pending.clone();
         self.pending.retain(|j| {
+            if j.kind == SnapshotKind::Partial {
+                return true;
+            }
             !snapshot.iter().any(|o| {
-                o.session == j.session && o.key.utterance == j.key.utterance && o.key.window == j.key.window && o.key.end > j.key.end
+                o.kind != SnapshotKind::Partial
+                    && o.session == j.session
+                    && o.key.utterance == j.key.utterance
+                    && o.key.window == j.key.window
+                    && o.key.end > j.key.end
             })
         });
-        self.pending.pop_front()
+        // Keep only the newest partial per session.
+        let snapshot = self.pending.clone();
+        self.pending.retain(|j| {
+            j.kind != SnapshotKind::Partial
+                || !snapshot.iter().any(|o| o.kind == SnapshotKind::Partial && o.session == j.session && o.enqueued > j.enqueued)
+        });
+        if let Some(pos) = self.pending.iter().position(|j| j.kind != SnapshotKind::Partial) {
+            return self.pending.remove(pos);
+        }
+        self.pending.pop_back()
     }
 
     fn run_job(&mut self, job: AsrJob) {
@@ -385,16 +405,20 @@ mod tests {
     }
 
     #[test]
-    fn superseded_snapshot_jobs_are_dropped() {
+    fn superseded_pause_jobs_are_dropped_and_partials_wait() {
         let mut w = worker();
-        w.pending.push_back(job(1, 0, 0, 100, SnapshotKind::Pause));
+        w.pending.push_back(job(1, 0, 0, 100, SnapshotKind::Partial));
         w.pending.push_back(job(1, 0, 0, 200, SnapshotKind::Pause));
+        w.pending.push_back(job(1, 0, 0, 300, SnapshotKind::Partial));
         w.pending.push_back(job(1, 0, 0, 400, SnapshotKind::Pause));
         w.pending.push_back(job(1, 0, 1, 50, SnapshotKind::Pause));
         let first = w.next_job().unwrap();
         assert_eq!((first.key.window, first.key.end), (0, 400));
         let second = w.next_job().unwrap();
         assert_eq!((second.key.window, second.key.end), (1, 50));
+        let third = w.next_job().unwrap();
+        assert_eq!(third.kind, SnapshotKind::Partial);
+        assert_eq!(third.key.end, 300, "only the newest partial survives");
         assert!(w.next_job().is_none());
     }
 

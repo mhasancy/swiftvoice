@@ -1,7 +1,8 @@
-//! Win32 overlay window. While you dictate it is a single red dot at the
-//! middle-left of the monitor you are working on; an insertion flashes that
-//! dot green, and other results and messages show as a small, translucent,
-//! rounded status pill near the bottom (or top).
+//! Win32 overlay window. While you dictate it is a small, translucent,
+//! rounded status pill near the bottom (or top) of the monitor you are
+//! working on: a red level dot with the "Listening" title and the live
+//! transcript. A successful insertion flashes a bare green dot at the
+//! middle-left; other results and messages show as the same status pill.
 //!
 //! It is created with WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW
 //! and shown with SW_SHOWNOACTIVATE, so it never takes focus, never receives
@@ -136,16 +137,26 @@ impl Overlay {
                 STATE.with(|s| s.borrow_mut().view = OverlayView::Hidden);
                 return;
             }
-            // Only the level changes between repaints.
+            // Level updates (-1 = keep the previous level) only repaint.
             let level = match &view {
-                OverlayView::Listening { level } => *level,
+                OverlayView::Listening { level, .. } => *level,
                 _ => 0.0,
             };
             let same_kind = STATE.with(|s| std::mem::discriminant(&s.borrow().view) == std::mem::discriminant(&view));
             STATE.with(|s| {
                 let mut s = s.borrow_mut();
-                s.view = view;
-                s.level = level;
+                if let (OverlayView::Listening { hint: Some(h), .. }, OverlayView::Listening { hint: None, text, level: l }) =
+                    (&s.view, &view)
+                {
+                    // Keep a hint (e.g. "loading the model") until text arrives.
+                    let hint = if text.is_empty() { Some(h.clone()) } else { None };
+                    s.view = OverlayView::Listening { level: *l, text: text.clone(), hint };
+                } else {
+                    s.view = view;
+                }
+                if level >= 0.0 {
+                    s.level = level;
+                }
             });
             if !self.visible || !same_kind {
                 self.place();
@@ -157,9 +168,9 @@ impl Overlay {
         }
     }
 
-    /// Position on the monitor that holds the foreground window: the dot at
-    /// the middle-left while dictating, the card near the bottom (or top) for
-    /// results and messages.
+    /// Position on the monitor that holds the foreground window: the status
+    /// card near the bottom (or top) while dictating and for messages, the
+    /// bare insert flash at the middle-left.
     unsafe fn place(&mut self) {
         let fg = GetForegroundWindow();
         let monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTOPRIMARY);
@@ -229,9 +240,12 @@ fn look(view: &OverlayView) -> Look {
     };
     match view {
         OverlayView::Hidden => Look { dot: 0, title: String::new(), body: String::new() },
-        // Dot views never reach this match; paint draws them before calling in.
-        OverlayView::Listening { .. } => Look { dot: rgb(0xFF, 0x45, 0x3A), title: String::new(), body: String::new() },
-        OverlayView::Processing => Look { dot: rgb(0xFF, 0xB0, 0x20), title: String::new(), body: String::new() },
+        OverlayView::Listening { text, hint, .. } => Look {
+            dot: rgb(0xFF, 0x45, 0x3A),
+            title: "Listening".into(),
+            body: if text.is_empty() { hint.clone().unwrap_or_else(|| "Speak now…".into()) } else { text.clone() },
+        },
+        OverlayView::Processing { text } => Look { dot: rgb(0xFF, 0xB0, 0x20), title: "Transcribing…".into(), body: text.clone() },
         OverlayView::Result { text, tone, detail } => {
             Look { dot: tone_color(*tone), title: text.clone(), body: detail.clone().unwrap_or_default() }
         }
