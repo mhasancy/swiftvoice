@@ -20,7 +20,9 @@ Save the file and SwiftVoice applies it within about a second: the file is
 checked once per second. If any value is invalid, a notification lists
 *all* problems and the previous settings stay in effect. Changes made from
 the tray menu rewrite only the affected key and keep your comments.
-Unknown keys are errors, so a typo cannot be silently ignored.
+Unknown keys are ignored with a warning in the log (`swiftvoice --doctor`
+lists them), so a file from an older version keeps working after an option
+is removed.
 
 `swiftvoice --doctor` checks the configuration, ONNX Runtime, telemetry
 state, models and microphones.

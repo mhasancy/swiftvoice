@@ -455,6 +455,12 @@ fn run_doctor(config_path: &Path) -> Result<()> {
             Config::default()
         }
     };
+    if let Ok(text) = std::fs::read_to_string(config_path) {
+        let unknown = Config::unknown_keys(&text);
+        if !unknown.is_empty() {
+            println!("[warn] config: unknown keys are ignored: {}", unknown.join(", "));
+        }
+    }
     println!("[info] logs: {}", crate::paths::logs_dir().display());
     let dir = config.models_dir();
     println!("[info] models folder: {}", dir.display());

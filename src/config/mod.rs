@@ -1,10 +1,10 @@
 //! User configuration (`config.toml`).
 //!
-//! The file is human-edited, so it is loaded leniently with respect to
-//! missing keys (every key has a default) but strictly with respect to
-//! unknown keys and bad values: a typo produces an error that names the
-//! key instead of silently being ignored. Tray changes are written back with
-//! `toml_edit`, which preserves the user's comments and formatting.
+//! The file is human-edited, so it is loaded leniently: every key has a
+//! default and unknown keys are ignored with a warning, so a file written
+//! by an older version keeps working. Bad values still produce an error
+//! that names the key. Tray changes are written back with `toml_edit`,
+//! which preserves the user's comments and formatting.
 
 mod template;
 
@@ -23,7 +23,7 @@ pub use template::DEFAULT_CONFIG_TOML;
 pub const DEFAULT_SMART_PROMPT: &str = "You are a dictation editor. Rewrite the dictated text into clear, correctly punctuated prose. Keep the original language, meaning, names, numbers and technical terms. Do not add information, do not answer questions contained in the text, and do not add greetings, quotes or explanations. Output only the rewritten text.";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct Config {
     pub general: GeneralConfig,
     pub hotkeys: HotkeyConfig,
@@ -36,7 +36,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct GeneralConfig {
     /// Start SwiftVoice when you sign in to Windows.
     pub autostart: bool,
@@ -53,7 +53,7 @@ impl Default for GeneralConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct HotkeyConfig {
     /// Hold to dictate, release to insert.
     pub push_to_talk: String,
@@ -81,7 +81,7 @@ impl Default for HotkeyConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct AudioConfig {
     /// "default" or the exact device name shown in the tray menu.
     pub device: String,
@@ -108,7 +108,7 @@ pub enum VadEngine {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct VadConfig {
     /// silero (neural, recommended) | energy (built in, no model needed)
     pub engine: VadEngine,
@@ -147,7 +147,7 @@ impl Default for VadConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct AsrConfig {
     /// Model id from `swiftvoice models list`.
     pub model: String,
@@ -161,10 +161,6 @@ pub struct AsrConfig {
     /// needs ~250 MB less RAM and loads faster; transcription is ~10-15%
     /// slower (docs/BENCHMARKS.md).
     pub low_memory: bool,
-    /// Accepted for old config files; the overlay live preview was removed.
-    pub partial_results: bool,
-    /// Accepted for old config files; the overlay live preview was removed.
-    pub partial_interval_ms: u32,
     /// Commit dictation at the next pause after this many seconds, so each
     /// transcription (and the wait after you stop) stays short.
     pub commit_after_secs: u32,
@@ -182,8 +178,6 @@ impl Default for AsrConfig {
             fallback_model: "whisper-large-v3-turbo-q5_0".into(),
             threads: 0,
             low_memory: true,
-            partial_results: true,
-            partial_interval_ms: 700,
             commit_after_secs: 6,
             unload_after_idle_secs: 0,
             warm_up: true,
@@ -210,7 +204,7 @@ impl PostMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct PostprocessConfig {
     /// raw | clean | smart
     pub mode: PostMode,
@@ -256,7 +250,7 @@ pub enum SmartProvider {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct SmartConfig {
     pub provider: SmartProvider,
     /// Must be a loopback http:// URL; anything else is rejected.
@@ -303,7 +297,7 @@ pub enum InsertTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct InsertionConfig {
     pub method: InsertMethod,
     pub target: InsertTarget,
@@ -358,11 +352,9 @@ pub enum OverlayPosition {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct OverlayConfig {
     pub enabled: bool,
-    /// Accepted for old config files; the overlay live preview was removed.
-    pub show_partials: bool,
     pub position: OverlayPosition,
     /// 0.3 ..= 1.0
     pub opacity: f32,
@@ -372,14 +364,43 @@ pub struct OverlayConfig {
 
 impl Default for OverlayConfig {
     fn default() -> Self {
-        OverlayConfig { enabled: true, show_partials: true, position: OverlayPosition::Bottom, opacity: 0.94, hide_after_ms: 900 }
+        OverlayConfig { enabled: true, position: OverlayPosition::Bottom, opacity: 0.94, hide_after_ms: 900 }
+    }
+}
+
+fn collect_unknown(file: &toml::Value, known: &toml::Value, prefix: &str, out: &mut Vec<String>) {
+    let (Some(file), Some(known)) = (file.as_table(), known.as_table()) else { return };
+    for (key, value) in file {
+        let path = if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
+        match known.get(key.as_str()) {
+            None => out.push(path),
+            Some(known_value) => collect_unknown(value, known_value, &path, out),
+        }
     }
 }
 
 impl Config {
-    /// Parse and validate a configuration document.
+    /// Dotted paths of keys in `text` that this build does not know. The
+    /// loader warns about them and carries on; `--doctor` prints them.
+    pub fn unknown_keys(text: &str) -> Vec<String> {
+        let Ok(cfg) = toml::from_str::<Config>(text) else { return Vec::new() };
+        let Ok(known_text) = toml::to_string(&cfg) else { return Vec::new() };
+        let (Ok(file), Ok(known)) = (toml::from_str::<toml::Value>(text), toml::from_str::<toml::Value>(&known_text)) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        collect_unknown(&file, &known, "", &mut out);
+        out
+    }
+
+    /// Parse and validate a configuration document. Unknown keys are
+    /// ignored with a warning so config files from older versions keep
+    /// working.
     pub fn from_toml_str(text: &str) -> Result<Config> {
         let cfg: Config = toml::from_str(text).map_err(|e| anyhow::anyhow!("{e}"))?;
+        for key in Config::unknown_keys(text) {
+            log::warn!("config: ignoring unknown key \"{key}\"");
+        }
         cfg.validate()?;
         Ok(cfg)
     }
@@ -610,9 +631,21 @@ mod tests {
     }
 
     #[test]
-    fn unknown_key_is_rejected_with_its_name() {
-        let err = Config::from_toml_str("[audio]\ngian_db = 3.0\n").unwrap_err().to_string();
-        assert!(err.contains("gian_db"), "{err}");
+    fn unknown_keys_are_ignored_with_a_warning() {
+        let text = "[audio]\ngian_db = 3.0\n[nope]\nx = 1\n";
+        let cfg = Config::from_toml_str(text).expect("unknown keys no longer fail the load");
+        assert_eq!(cfg.audio.gain_db, 0.0);
+        assert_eq!(Config::unknown_keys(text), ["audio.gian_db", "nope"]);
+    }
+
+    #[test]
+    fn removed_partial_keys_from_old_configs_still_load() {
+        let text = "[asr]\npartial_results = true\npartial_interval_ms = 700\n[overlay]\nshow_partials = true\n";
+        let cfg = Config::from_toml_str(text).expect("config files from older versions keep loading");
+        assert_eq!(cfg.asr.commit_after_secs, 6);
+        let mut unknown = Config::unknown_keys(text);
+        unknown.sort();
+        assert_eq!(unknown, ["asr.partial_interval_ms", "asr.partial_results", "overlay.show_partials"]);
     }
 
     #[test]
