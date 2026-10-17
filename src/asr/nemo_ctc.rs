@@ -24,10 +24,6 @@ pub struct NemoCtc {
 }
 
 impl NemoCtc {
-    pub fn detect(dir: &Path) -> bool {
-        find_file(dir, &["model.int8.onnx", "model.onnx"]).is_ok() && dir.join("tokens.txt").is_file()
-    }
-
     pub fn load(dir: &Path, threads: u32) -> Result<NemoCtc> {
         let path = find_file(dir, &["model.int8.onnx", "model.onnx"])?;
         let tokens = TokenTable::load(&dir.join("tokens.txt"))?;

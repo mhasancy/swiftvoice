@@ -11,8 +11,9 @@
 
 Other layouts:
 - **Portable mode:** create an empty `swiftvoice.portable` next to
-  `swiftvoice.exe` (`scripts\build-windows.ps1 -Portable`), and all of the
-  above live next to the exe.
+  `swiftvoice.exe` (`scripts\build-windows.ps1 -Portable`); `config.toml`,
+  `vocabulary.toml` and `logs\` then live in `data\` and models in
+  `models\`, next to the exe.
 - **`SWIFTVOICE_HOME=<folder>`** puts everything under that folder.
 - **`--config FILE`** uses another settings file.
 

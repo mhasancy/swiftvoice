@@ -7,7 +7,8 @@
     1. Checks the toolchain: Rust >= 1.92 with the MSVC target, and CMake plus
        libclang (LLVM) for the whisper.cpp fallback (the Visual Studio-bundled
        CMake and Clang are used when no standalone install is found).
-    2. cargo build --release --locked, and cargo test unless -SkipTests.
+    2. cargo build --release --locked --features whisper (skipped by
+       -NoWhisper), and cargo test unless -SkipTests.
     3. Downloads Microsoft's official ONNX Runtime 1.31.0 CPU build from
        GitHub releases (or uses -OrtZip), verifies its SHA-256, and extracts
        onnxruntime.dll and its licence files.
@@ -26,8 +27,9 @@
     Do not run cargo test.
 
 .PARAMETER Portable
-    Add swiftvoice.portable to the package: settings, logs and models are
-    then kept next to swiftvoice.exe instead of %APPDATA% / %LOCALAPPDATA%.
+    Add swiftvoice.portable to the package: settings and logs are then kept
+    in data\ and models in models\, next to swiftvoice.exe instead of
+    %APPDATA% / %LOCALAPPDATA%.
 
 .PARAMETER OrtZip
     Path to an already downloaded onnxruntime-win-x64-1.31.0.zip (offline
@@ -148,7 +150,7 @@ if (-not $NoWhisper) {
 }
 
 # --- 2. Build and test ----------------------------------------------------
-$features = @()
+$features = @('--features', 'whisper')
 if ($NoWhisper) { $features = @('--no-default-features') }
 
 Step 'Building (release)'

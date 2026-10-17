@@ -10,9 +10,10 @@ default-run = "swiftvoice"
 build = "build.rs"
 
 [features]
-default = ["whisper"]
-# whisper.cpp fallback engine (Bengali and ~99 other languages). Needs CMake and a
-# C++ compiler at build time; see README "Building".
+default = []
+# whisper.cpp fallback engine (Bengali and ~99 other languages), opt-in via
+# `--features whisper` (scripts\build-windows.ps1 adds it unless -NoWhisper).
+# Needs CMake and a C++ compiler at build time; see README "Building".
 whisper = ["dep:whisper-rs"]
 
 [dependencies]

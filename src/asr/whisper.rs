@@ -18,11 +18,6 @@ pub struct WhisperEngine {
 }
 
 impl WhisperEngine {
-    /// `dir` must contain exactly one `ggml-*.bin` model file.
-    pub fn detect(dir: &Path) -> bool {
-        find_model(dir).is_ok()
-    }
-
     pub fn load(dir: &Path, threads: u32, initial_prompt: String) -> Result<WhisperEngine> {
         let path = find_model(dir)?;
         let mut params = WhisperContextParameters::default();

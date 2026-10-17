@@ -74,7 +74,8 @@ Requirements:
 - Rust via `rustup`, with the MSVC toolchain. `rust-toolchain.toml` pins the exact version (1.99.0), and rustup installs it on first build. The minimum supported version is 1.92.
 - Visual Studio 2022 or newer, or Build Tools, with *Desktop development
   with C++*.
-- For the Whisper fallback:
+- Only when building with the Whisper fallback (`--features whisper`; the
+  build script adds it unless `-NoWhisper`):
   - *C++ CMake tools for Windows*, or CMake on PATH;
   - libclang, to generate the whisper.cpp bindings: LLVM (`winget install LLVM.LLVM`), or *C++ Clang Compiler for Windows* in the Visual Studio Installer.
 
@@ -85,7 +86,8 @@ dist\SwiftVoice\swiftvoice.exe
 ```
 
 The script:
-- builds with `cargo build --release --locked` and runs `cargo test`;
+- builds with `cargo build --release --locked --features whisper` (unless
+  `-NoWhisper`) and runs `cargo test`;
 - downloads ONNX Runtime 1.31.0 from Microsoft's GitHub release and
   checks its SHA-256;
 - copies the VC++ runtime DLLs from your Visual Studio installation;
@@ -93,14 +95,14 @@ The script:
 - writes `dist\SwiftVoice-<version>-win-x64.zip`.
 
 Options: `-NoWhisper` (no CMake or LLVM needed, no Whisper fallback), `-SkipTests`,
-`-Portable` (settings and models next to the exe), `-OrtZip <file>`
+`-Portable` (`data\` and `models\` folders next to the exe), `-OrtZip <file>`
 (offline build).
 
 Individual commands:
 
 ```powershell
-cargo build --release --locked                      # build (whisper fallback included)
-cargo build --release --locked --no-default-features  # build without whisper.cpp
+cargo build --release --locked                      # build (no Whisper fallback)
+cargo build --release --locked --features whisper   # with whisper.cpp (CMake + libclang needed)
 cargo test --release --locked                       # unit + integration tests
 cargo clippy --all-targets -- -D warnings           # lint
 cargo fmt --check                                   # formatting

@@ -30,8 +30,9 @@ Visual C++ Redistributable (x64) from
 The Whisper fallback's Rust bindings are generated at build time, which
 needs libclang. Install LLVM (`winget install LLVM.LLVM`) or *C++ Clang
 Compiler for Windows* in the Visual Studio Installer. Alternatively, set
-`LIBCLANG_PATH` to the folder that contains `libclang.dll`, or build
-without the fallback: `scripts\build-windows.ps1 -NoWhisper`.
+`LIBCLANG_PATH` to the folder that contains `libclang.dll`, or skip the
+fallback: `cargo build` without `--features whisper`, or
+`scripts\build-windows.ps1 -NoWhisper`.
 
 **Windows SmartScreen: "Windows protected your PC".** Your own build is not
 code-signed. Click *More info > Run anyway*, or sign the exe with your
@@ -156,8 +157,10 @@ pinned digest. Remove it (`swiftvoice models remove <id>`) and download it
 again. SwiftVoice never loads an unverified model.
 
 **"this build of SwiftVoice was compiled without the whisper.cpp engine".**
-The build used `-NoWhisper`. Rebuild without it (needs CMake) to use
-Bengali and other non-Parakeet languages.
+The build did not include the `whisper` cargo feature: a plain
+`cargo build`, or `scripts\build-windows.ps1 -NoWhisper`. Rebuild with
+`--features whisper` (needs CMake and libclang) to use Bengali and other
+non-Parakeet languages.
 
 **"Parakeet TDT 0.6B v3 does not support Bengali; set asr.fallback_model to
 a Whisper model to use it".** Set `asr.fallback_model` to one of the
