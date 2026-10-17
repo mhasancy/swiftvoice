@@ -358,7 +358,7 @@ pub enum OverlayPosition {
 pub struct OverlayConfig {
     pub enabled: bool,
     pub position: OverlayPosition,
-    /// 0.0 ..= 1.0; very low values make the card nearly invisible.
+    /// 0.0 ..= 1.0; very low values make the dot faint.
     pub opacity: f32,
     /// How long the result stays visible after insertion.
     pub hide_after_ms: u32,

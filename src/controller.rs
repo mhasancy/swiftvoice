@@ -352,9 +352,9 @@ impl<U: Ui, P: Ports> Controller<U, P> {
         let english = language == "en" || (language == "auto" && info.languages == ["en"]);
         let original = self.ui.foreground_window();
         let v = &self.cfg.vad;
-        let partials = self.cfg.overlay.enabled;
-        // Live overlay text: re-transcribe the audio so far every 700 ms of speech.
-        let partial_ms = partials.then_some(700);
+        // The overlay draws a bare dot, so there is no live text to feed:
+        // partial re-transcriptions would only burn CPU while you talk.
+        let partial_ms = None;
         let seg = match mode {
             SessionMode::PushToTalk => SegmenterConfig::from_ms(
                 v.threshold,

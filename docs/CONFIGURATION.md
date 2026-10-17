@@ -161,19 +161,17 @@ That is why Smart mode is opt-in, and why `timeout_ms` caps the wait.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enabled` | `true` | small click-through status window (it never takes focus) |
-| `position` | `"bottom"` | bottom, top, or hugging a left corner (`bottom-left`, `top-left`), on the monitor that shows the focused window |
-| `opacity` | `0.94` | 0.0 … 1.0; very low values make the card nearly invisible (the insert flash stays opaque) |
-| `hide_after_ms` | `900` | 0 … 10000; how long the result stays visible |
+| `enabled` | `true` | small click-through dot (it never takes focus) |
+| `position` | `"bottom"` | the dot's corner on the monitor that shows the focused window: `bottom` and `top` are the left corners, `bottom-left` and `top-left` say so explicitly |
+| `opacity` | `0.94` | 0.0 … 1.0; alpha of the dot |
+| `hide_after_ms` | `900` | 0 … 10000; how long a result flash stays visible |
 
-While you dictate, a card at `position` — bottom or top center, or a left
-corner — shows the live transcript as it comes in; a red dot on the card
-follows your voice. Set `opacity` low (for example `0.05`) to keep the
-card effectively invisible. When the text has been inserted a bare green
-dot flashes at the middle-left for `hide_after_ms` and disappears — a
-successful insertion shows no card. When nothing can take the text (no
-focused window, the desktop, the taskbar, an icon or file list) the card
-says so and the text stays on the clipboard instead.
+The overlay is a bare dot, never a text card. It is red while you dictate
+(its size follows your voice), amber while the text is recognised, and
+then it flashes `hide_after_ms` in the result's color: green when the text
+was inserted, amber when nothing could take it and it went to the
+clipboard instead (no focused window, the desktop, the taskbar, an icon or
+file list), red for an error. Notices from the app use the same dot.
 
 ## Vocabulary (`vocabulary.toml`)
 

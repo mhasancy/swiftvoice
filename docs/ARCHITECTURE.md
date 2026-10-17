@@ -80,7 +80,9 @@ error for that utterance instead of blocking the audio thread.
      at that pause (its transcript is already running) and only the rest is
      transcribed. The work left after release is therefore about one
      phrase, however long you talked;
-   - `Snapshot(Partial)` every 700 ms while speaking, for the live overlay;
+   - `Snapshot(Partial)` previews while speaking; the app asks for none
+     (its overlay is a bare dot), and the pipeline keeps the path tested
+     for the benchmark and the unit tests;
    - a hard cut at 16 s without any pause keeps memory and latency bounded
      and lands just before the quietest frame of the last 2 s, so the new
      window starts in a word gap instead of mid-word.
@@ -222,8 +224,8 @@ The default `method = "auto"`:
   be checked against what the microphone actually delivered.
 - **A stuck insertion queue.** Dictated text reaches the inserter thread
   through a bounded queue; if the queue stays full (or the thread has
-  exited) the text is copied to the clipboard with a card explaining why,
-  instead of being dropped with only a log line.
+  exited) the text is copied to the clipboard and the overlay flashes
+  amber, instead of being dropped with only a log line.
 - **Sleep/resume and screen lock.** Listening stops on sleep and on lock.
   On resume the device is released and the hotkeys re-registered.
 - **Explorer restart.** The tray icon is re-added on `TaskbarCreated`.

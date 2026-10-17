@@ -121,10 +121,10 @@ is not restored; this is intended. A clipboard manager that rewrites the
 clipboard on every change can also stop the restore. In both cases the log
 says "clipboard changed after paste".
 
-**A card says insertion is busy or stopped.** The inserter thread could
-not take the text in time, so it was copied to the clipboard instead;
-press Ctrl+V. If every dictation says "Insertion stopped", the inserter
-thread has exited: restart SwiftVoice.
+**The dot flashes amber when insertion is busy or stopped.** The inserter
+thread could not take the text in time, so it was copied to the clipboard
+instead; press Ctrl+V. If every dictation says "Insertion stopped", the
+inserter thread has exited: restart SwiftVoice.
 
 **Typed text has wrong characters.** Remote-desktop clients and some games
 handle Unicode key events poorly. Use the default paste method for those
