@@ -22,7 +22,6 @@
 //!   window (from an earlier pause) as context, so the recogniser continues
 //!   the sentence instead of starting a new one; engines drop the words
 //!   spoken in the context.
-//! * `Snapshot(Partial)` periodically while speaking, for the live overlay.
 //!
 //! Window ids are local to an utterance; utterance ids are local to a
 //! recording session. A snapshot is identified by `(utterance, window, end)`
@@ -68,8 +67,6 @@ pub struct SegmenterConfig {
     /// At the end of an utterance, a pause snapshot at least this long is
     /// committed and only the audio after it is transcribed.
     pub split_min_samples: usize,
-    /// Frames between partial snapshots while speaking (`None` = off).
-    pub partial_interval_frames: Option<u32>,
     /// Frames without any speech after the session starts before giving up.
     pub no_speech_timeout_frames: Option<u32>,
     /// Frames of silence after an utterance before the session stops
@@ -86,7 +83,6 @@ impl SegmenterConfig {
         endpoint_ms: Option<u32>,
         pre_roll_ms: u32,
         commit_after_secs: u32,
-        partial_interval_ms: Option<u32>,
         no_speech_timeout_ms: Option<u32>,
         idle_timeout_ms: Option<u32>,
     ) -> SegmenterConfig {
@@ -104,7 +100,6 @@ impl SegmenterConfig {
             context_min_samples: CONTEXT_MIN_MS as usize * 16,
             context_max_samples: CONTEXT_MAX_MS as usize * 16,
             split_min_samples: SPLIT_MIN_MS as usize * 16,
-            partial_interval_frames: partial_interval_ms.map(frames),
             no_speech_timeout_frames: no_speech_timeout_ms.map(frames),
             idle_timeout_frames: idle_timeout_ms.map(frames),
         }
@@ -113,8 +108,6 @@ impl SegmenterConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotKind {
-    /// Live preview; may be dropped if the recogniser is busy.
-    Partial,
     /// Speculative transcription at a pause.
     Pause,
     /// Transcription needed at the end of an utterance (no matching pause
@@ -187,7 +180,6 @@ pub struct Segmenter {
     silence_frames: u32,
     last_speech_end: usize,
     last_snapshot: Option<SnapKey>,
-    frames_since_partial: u32,
     quiet_frames: u32,
     timeout_reported: bool,
 }
@@ -209,7 +201,6 @@ impl Segmenter {
             silence_frames: 0,
             last_speech_end: 0,
             last_snapshot: None,
-            frames_since_partial: 0,
             quiet_frames: 0,
             timeout_reported: false,
         }
@@ -280,16 +271,6 @@ impl Segmenter {
                 self.emit_snapshot(SnapshotKind::Final, end, out);
                 self.commit(end, out);
             }
-            if self.window_has_speech && self.speaking {
-                if let Some(interval) = self.cfg.partial_interval_frames {
-                    self.frames_since_partial += 1;
-                    if self.frames_since_partial >= interval {
-                        self.frames_since_partial = 0;
-                        let end = self.window.len();
-                        self.emit_snapshot(SnapshotKind::Partial, end, out);
-                    }
-                }
-            }
         }
 
         if self.utterance_has_speech {
@@ -321,7 +302,6 @@ impl Segmenter {
         self.speaking = true;
         self.silence_frames = 0;
         self.last_speech_end = self.window.len();
-        self.frames_since_partial = 0;
         self.quiet_frames = 0;
         self.timeout_reported = false;
         if !self.utterance_has_speech {
@@ -359,9 +339,7 @@ impl Segmenter {
 
     fn emit_snapshot(&mut self, kind: SnapshotKind, end: usize, out: &mut Vec<SegEvent>) {
         let key = self.key(end);
-        if kind != SnapshotKind::Partial {
-            self.last_snapshot = Some(key);
-        }
+        self.last_snapshot = Some(key);
         let mut audio = Vec::with_capacity(self.context.len() + end);
         audio.extend_from_slice(&self.context);
         audio.extend_from_slice(&self.window[..end]);
@@ -387,7 +365,6 @@ impl Segmenter {
         self.speech_run = 0;
         self.last_speech_end = 0;
         self.last_snapshot = None;
-        self.frames_since_partial = 0;
     }
 
     /// Where a forced window cut should land: just before the quietest frame
@@ -449,7 +426,6 @@ impl Segmenter {
         self.silence_frames = 0;
         self.last_speech_end = 0;
         self.last_snapshot = None;
-        self.frames_since_partial = 0;
         self.quiet_frames = 0;
         self.timeout_reported = false;
         self.trim_leading_silence();
@@ -464,11 +440,11 @@ mod tests {
 
     fn cfg_toggle() -> SegmenterConfig {
         // pause 192 ms (6 frames), endpoint 800 ms (25 frames), pre-roll 320 ms.
-        SegmenterConfig::from_ms(0.5, 192, Some(800), 320, 12, None, Some(4000), Some(3200))
+        SegmenterConfig::from_ms(0.5, 192, Some(800), 320, 12, Some(4000), Some(3200))
     }
 
     fn cfg_ptt() -> SegmenterConfig {
-        SegmenterConfig::from_ms(0.5, 192, None, 320, 12, None, None, None)
+        SegmenterConfig::from_ms(0.5, 192, None, 320, 12, None, None)
     }
 
     /// Drive the segmenter with a probability per frame; each frame's
@@ -757,16 +733,5 @@ mod tests {
         assert_eq!(ends[1].1.unwrap().utterance, 1);
         d.feed(120, 0.0);
         assert!(d.events.iter().any(|e| matches!(e, SegEvent::IdleTimeout)));
-    }
-
-    #[test]
-    fn partial_snapshots_follow_the_interval() {
-        let cfg = SegmenterConfig::from_ms(0.5, 192, None, 320, 12, Some(320), None, None);
-        let mut d = Driver::new(cfg);
-        d.feed(2, 0.9);
-        d.feed(50, 0.9);
-        let partials = d.snapshots(SnapshotKind::Partial);
-        assert_eq!(partials.len(), 5);
-        assert!(partials.windows(2).all(|w| w[1].key.end > w[0].key.end));
     }
 }

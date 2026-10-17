@@ -42,7 +42,6 @@ pub enum TrayCommand {
     SetMode(PostMode),
     SetInsertMethod(InsertMethod),
     ToggleOverlay,
-    TogglePartials,
     ToggleContinuous,
     ToggleAutostart,
     OpenSettings,

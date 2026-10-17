@@ -30,7 +30,7 @@ use serde::Serialize;
 
 use crate::asr::{self, catalog};
 use crate::audio::processor::{make_vad, VadChoice};
-use crate::audio::segmenter::{SegEvent, Segmenter, SegmenterConfig, SnapKey, SnapshotKind};
+use crate::audio::segmenter::{SegEvent, Segmenter, SegmenterConfig, SnapKey};
 use crate::audio::vad::{FRAME_MS, FRAME_SAMPLES};
 use crate::audio::wav;
 use crate::config::{Config, PostMode};
@@ -270,9 +270,7 @@ fn replay(audio: &[f32], vad: &mut dyn crate::audio::vad::Vad, cfg: SegmenterCon
                   ends: &mut Vec<(u32, Vec<SnapKey>, f64, f64)>| {
         for ev in events.drain(..) {
             match ev {
-                SegEvent::Snapshot(s) if s.kind != SnapshotKind::Partial => {
-                    jobs.push(SimJob { emit_ms: now_ms, key: s.key, audio: s.audio, context: s.context })
-                }
+                SegEvent::Snapshot(s) => jobs.push(SimJob { emit_ms: now_ms, key: s.key, audio: s.audio, context: s.context }),
                 SegEvent::Commit { key } => commits.entry(key.utterance).or_default().push(key),
                 SegEvent::UtteranceEnd { utterance, last, .. } => {
                     let mut keys = commits.remove(&utterance).unwrap_or_default();
@@ -430,7 +428,6 @@ pub fn run(args: &BenchArgs, config: &Config) -> Result<BenchReport> {
         commit_after_secs,
         None,
         None,
-        None,
     );
     // Recordings often stop right after the last word; append silence so the
     // endpoint (toggle) and the key release (push-to-talk) happen after the
@@ -442,7 +439,7 @@ pub fn run(args: &BenchArgs, config: &Config) -> Result<BenchReport> {
     // Push-to-talk: one hold over the whole file, released after the last word.
     let last_speech_ms = if toggle.last_speech_ms > 0.0 { toggle.last_speech_ms } else { audio_secs * 1000.0 };
     let release_ms = last_speech_ms + args.release_delay_ms as f64;
-    let ptt_cfg = SegmenterConfig::from_ms(v.threshold, v.pause_ms, None, v.pre_roll_ms, commit_after_secs, None, None, None);
+    let ptt_cfg = SegmenterConfig::from_ms(v.threshold, v.pause_ms, None, v.pre_roll_ms, commit_after_secs, None, None);
     let ptt = replay(&sim_audio, vad.as_mut(), ptt_cfg, Some((release_ms, config.hotkeys.release_tail_ms)))?;
 
     // The event timeline is deterministic; recogniser times are not. Run
@@ -688,7 +685,7 @@ mod tests {
         audio.extend((0..24_000).map(|i| 0.3 * (i as f32 * 0.09).sin()));
         audio.extend(std::iter::repeat_n(0.0, 24_000));
         let mut vad = crate::audio::vad::EnergyVad::new(9.0);
-        let cfg = SegmenterConfig::from_ms(0.5, 200, Some(800), 300, 12, None, None, None);
+        let cfg = SegmenterConfig::from_ms(0.5, 200, Some(800), 300, 12, None, None);
         let r = replay(&audio, &mut vad, cfg, None).unwrap();
         assert_eq!(r.ends.len(), 1);
         let (_, keys, end_ms, speech_end_ms) = &r.ends[0];
@@ -697,7 +694,7 @@ mod tests {
         assert!(end_ms > speech_end_ms);
         // The pause snapshot is emitted long before the endpoint.
         assert!(r.jobs.iter().any(|j| j.key == keys[0] && j.emit_ms < *end_ms));
-        let cfg = SegmenterConfig::from_ms(0.5, 200, None, 300, 12, None, None, None);
+        let cfg = SegmenterConfig::from_ms(0.5, 200, None, 300, 12, None, None);
         let r = replay(&audio, &mut vad, cfg, Some((2300.0, 150))).unwrap();
         assert_eq!(r.ends.len(), 1);
     }

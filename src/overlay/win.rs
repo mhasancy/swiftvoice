@@ -136,26 +136,16 @@ impl Overlay {
                 STATE.with(|s| s.borrow_mut().view = OverlayView::Hidden);
                 return;
             }
-            // Level updates (-1 = keep the previous level) only repaint.
+            // Only the level changes between repaints.
             let level = match &view {
-                OverlayView::Listening { level, .. } => *level,
+                OverlayView::Listening { level } => *level,
                 _ => 0.0,
             };
             let same_kind = STATE.with(|s| std::mem::discriminant(&s.borrow().view) == std::mem::discriminant(&view));
             STATE.with(|s| {
                 let mut s = s.borrow_mut();
-                if let (OverlayView::Listening { hint: Some(h), .. }, OverlayView::Listening { hint: None, text, level: l }) =
-                    (&s.view, &view)
-                {
-                    // Keep a hint (e.g. "loading the model") until text arrives.
-                    let hint = if text.is_empty() { Some(h.clone()) } else { None };
-                    s.view = OverlayView::Listening { level: *l, text: text.clone(), hint };
-                } else {
-                    s.view = view;
-                }
-                if level >= 0.0 {
-                    s.level = level;
-                }
+                s.view = view;
+                s.level = level;
             });
             if !self.visible || !same_kind {
                 self.place();
@@ -239,12 +229,9 @@ fn look(view: &OverlayView) -> Look {
     };
     match view {
         OverlayView::Hidden => Look { dot: 0, title: String::new(), body: String::new() },
-        OverlayView::Listening { text, hint, .. } => Look {
-            dot: rgb(0xFF, 0x45, 0x3A),
-            title: "Listening".into(),
-            body: if text.is_empty() { hint.clone().unwrap_or_else(|| "Speak now…".into()) } else { text.clone() },
-        },
-        OverlayView::Processing { text } => Look { dot: rgb(0xFF, 0xB0, 0x20), title: "Transcribing…".into(), body: text.clone() },
+        // Dot views never reach this match; paint draws them before calling in.
+        OverlayView::Listening { .. } => Look { dot: rgb(0xFF, 0x45, 0x3A), title: String::new(), body: String::new() },
+        OverlayView::Processing => Look { dot: rgb(0xFF, 0xB0, 0x20), title: String::new(), body: String::new() },
         OverlayView::Result { text, tone, detail } => {
             Look { dot: tone_color(*tone), title: text.clone(), body: detail.clone().unwrap_or_default() }
         }

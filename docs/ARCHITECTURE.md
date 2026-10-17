@@ -48,8 +48,8 @@ inserted text, and why it is fast.
   target application can never stall the UI or audio.
 
 All channels are bounded. Senders on the latency path use `try_send`. A full
-queue drops partial (preview) jobs first. For final jobs it reports an
-error for that utterance instead of blocking the audio thread.
+queue reports an error for that utterance instead of blocking the audio
+thread.
 
 ## From sound to text
 
@@ -80,7 +80,6 @@ error for that utterance instead of blocking the audio thread.
      at that pause (its transcript is already running) and only the rest is
      transcribed. The work left after release is therefore about one
      phrase, however long you talked;
-   - `Snapshot(Partial)` every 700 ms while speaking, for the live overlay;
    - a hard cut at 16 s without any pause keeps memory and latency bounded
      and lands just before the quietest frame of the last 2 s, so the new
      window starts in a word gap instead of mid-word.
@@ -96,8 +95,7 @@ error for that utterance instead of blocking the audio thread.
    at a pause it happened 1 time in 92. Context that begins at a pause
    avoids it.
 6. **Recogniser** (`asr::worker`): jobs for the same window supersede each
-   other. Only the longest queued Pause/Final job survives. Partial jobs
-   run only when nothing else is queued.
+   other. Only the longest queued Pause/Final job survives.
 7. **Engines.**
    - *Parakeet TDT* (`asr::parakeet`). A Rust NeMo log-mel front end:
      pre-emphasis 0.97, 25 ms Hann window in a 512-point FFT, 10 ms hop,
