@@ -90,7 +90,7 @@ type_apps = []             # e.g. ["game.exe"] always receive typed text
 
 [overlay]
 enabled = true
-position = "bottom"        # bottom | top
-opacity = 0.94
+position = "bottom"        # bottom | top | bottom-left | top-left
+opacity = 0.94             # 0.0 .. 1.0; very low = nearly invisible card
 hide_after_ms = 900
 "#;
