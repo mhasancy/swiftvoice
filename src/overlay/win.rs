@@ -57,10 +57,11 @@ fn dot_mode() -> bool {
 }
 
 /// Layered-window transparency: uniform alpha for the card; for the dot the
-/// background is keyed out, so only the dot remains visible.
+/// background is keyed out and the dot stays fully opaque, so a low
+/// `overlay.opacity` hides only the cards, never the insert flash.
 unsafe fn apply_style(hwnd: HWND, opacity: u8, dot: bool) {
     if dot {
-        SetLayeredWindowAttributes(hwnd, TRANSPARENT_KEY, opacity, LWA_ALPHA | LWA_COLORKEY);
+        SetLayeredWindowAttributes(hwnd, TRANSPARENT_KEY, 255, LWA_ALPHA | LWA_COLORKEY);
     } else {
         SetLayeredWindowAttributes(hwnd, 0, opacity, LWA_ALPHA);
     }
@@ -123,7 +124,7 @@ impl Overlay {
 
     pub fn configure(&mut self, position: OverlayPosition, opacity: f32) {
         self.position = position;
-        self.opacity = (opacity.clamp(0.3, 1.0) * 255.0) as u8;
+        self.opacity = (opacity.clamp(0.0, 1.0) * 255.0) as u8;
         unsafe { apply_style(self.hwnd, self.opacity, dot_mode()) };
     }
 
@@ -192,11 +193,14 @@ impl Overlay {
             let margin = (20.0 * scale) as i32;
             (work.left + margin, work.top + ((work.bottom - work.top) - h) / 2)
         } else {
-            let x = work.left + ((work.right - work.left) - w) / 2;
             let margin = (56.0 * scale) as i32;
             let y = match self.position {
-                OverlayPosition::Bottom => work.bottom - h - margin,
-                OverlayPosition::Top => work.top + margin,
+                OverlayPosition::Bottom | OverlayPosition::BottomLeft => work.bottom - h - margin,
+                OverlayPosition::Top | OverlayPosition::TopLeft => work.top + margin,
+            };
+            let x = match self.position {
+                OverlayPosition::BottomLeft | OverlayPosition::TopLeft => work.left + (20.0 * scale) as i32,
+                OverlayPosition::Bottom | OverlayPosition::Top => work.left + ((work.right - work.left) - w) / 2,
             };
             (x, y)
         };

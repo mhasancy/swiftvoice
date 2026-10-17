@@ -345,10 +345,12 @@ impl Default for InsertionConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum OverlayPosition {
     Bottom,
     Top,
+    BottomLeft,
+    TopLeft,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -356,7 +358,7 @@ pub enum OverlayPosition {
 pub struct OverlayConfig {
     pub enabled: bool,
     pub position: OverlayPosition,
-    /// 0.3 ..= 1.0
+    /// 0.0 ..= 1.0; very low values make the card nearly invisible.
     pub opacity: f32,
     /// How long the result stays visible after insertion.
     pub hide_after_ms: u32,
@@ -492,7 +494,7 @@ impl Config {
         range_u32(&mut errs, "insertion.restore_delay_ms", self.insertion.restore_delay_ms, 50, 5000);
         range_u32(&mut errs, "insertion.modifier_wait_ms", self.insertion.modifier_wait_ms, 0, 3000);
         range_u32(&mut errs, "insertion.max_clipboard_snapshot_mb", self.insertion.max_clipboard_snapshot_mb, 1, 512);
-        range_f32(&mut errs, "overlay.opacity", self.overlay.opacity, 0.3, 1.0);
+        range_f32(&mut errs, "overlay.opacity", self.overlay.opacity, 0.0, 1.0);
         range_u32(&mut errs, "overlay.hide_after_ms", self.overlay.hide_after_ms, 0, 10_000);
         if errs.is_empty() {
             Ok(())
@@ -656,10 +658,17 @@ mod tests {
 
     #[test]
     fn out_of_range_values_are_all_reported() {
-        let err = Config::from_toml_str("[vad]\nthreshold = 2.0\npause_ms = 10\n[overlay]\nopacity = 0.1\n").unwrap_err().to_string();
+        let err = Config::from_toml_str("[vad]\nthreshold = 2.0\npause_ms = 10\n[overlay]\nopacity = 1.2\n").unwrap_err().to_string();
         assert!(err.contains("vad.threshold"), "{err}");
         assert!(err.contains("vad.pause_ms"), "{err}");
         assert!(err.contains("overlay.opacity"), "{err}");
+    }
+
+    #[test]
+    fn overlay_accepts_corner_positions_and_low_opacity() {
+        let cfg = Config::from_toml_str("[overlay]\nposition = \"bottom-left\"\nopacity = 0.05\n").unwrap();
+        assert_eq!(cfg.overlay.position, OverlayPosition::BottomLeft);
+        assert_eq!(cfg.overlay.opacity, 0.05);
     }
 
     #[test]
