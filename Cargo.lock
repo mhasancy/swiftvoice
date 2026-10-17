@@ -1152,6 +1152,7 @@ dependencies = [
  "toml",
  "toml_edit",
  "whisper-rs",
+ "windows",
  "windows-sys",
  "winresource",
 ]

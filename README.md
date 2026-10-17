@@ -137,13 +137,15 @@ catalogue.
 A modifier key can also be used alone: with `toggle = "RAlt"`, one press of
 Right Alt starts dictation and the next press stops it.
 
-While you dictate, a small dot in the corner of the screen shows the
-state: red while recording, its size following your voice, and amber
-while the words are recognised. A result flashes briefly — green when the
-text was inserted, amber when nothing could take it (no focused window,
-the desktop, the taskbar, an icon or file list) and the text is on the
-clipboard instead, ready to paste anywhere. Errors and notices use the
-same dot. It never takes focus. The tray menu provides:
+While you dictate, a small dot on the screen shows the state: red while
+recording, its size following your voice, and amber while the words are
+recognised. A result flashes briefly — green when the text was inserted,
+amber when nothing could take it (no focused window, the desktop, the
+taskbar, a file list, or a spot whose focused element is no text field,
+which UI Automation decides even inside browsers, Electron and WinUI
+apps) and the text is on the clipboard instead, ready to paste anywhere.
+Errors and notices use the same dot. It never takes focus. The tray menu
+provides:
 - start/stop;
 - hotkey changes;
 - microphone, gain and noise suppression;

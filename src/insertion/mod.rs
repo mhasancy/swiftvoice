@@ -5,10 +5,11 @@
 //!    our Ctrl+V would become Ctrl+Alt+V); release them synthetically if
 //!    they stay down.
 //! 2. Check the target: no focused window, SwiftVoice itself, the desktop
-//!    or taskbar, or no text field at all -> the text goes to the clipboard
-//!    with a notice; a window running as administrator (when SwiftVoice is
-//!    not) -> same, because Windows blocks simulated input into it (UIPI)
-//!    without telling the sender.
+//!    or taskbar, or a focused element that cannot take text (UI Automation
+//!    decides that too for apps whose text fields hide inside their window)
+//!    -> the text goes to the clipboard with a notice; a window running as
+//!    administrator (when SwiftVoice is not) -> same, because Windows blocks
+//!    simulated input into it (UIPI) without telling the sender.
 //! 3. Paste through the clipboard (fast, exact Unicode, works in browsers,
 //!    Office, Electron apps, terminals), restoring the previous clipboard.
 //!    Apps listed in `type_apps`, or a clipboard we cannot snapshot, get
@@ -55,8 +56,9 @@ pub trait Desktop {
     fn type_text(&self, text: &str) -> Result<()>;
     fn self_elevated(&self) -> bool;
     /// Whether the focused target can receive text: `Some(false)` only when
-    /// it positively cannot (desktop, taskbar, an icon or file list); `None`
-    /// when unknown, which the caller treats as writable.
+    /// it positively cannot (the desktop, the taskbar, a file list, or a
+    /// focused element UI Automation says is no text field); `None` when
+    /// unknown, which the caller treats as writable.
     fn focused_editable(&self) -> Option<bool>;
 }
 
@@ -208,8 +210,10 @@ impl<D: Desktop, C: ClipboardBackend> Inserter<D, C> {
         }
         let typed_app = s.type_apps.contains(&target.process);
         // Typing works even where Windows exposes no text element (games), so
-        // an app listed in `type_apps` skips the writability check.
-        if !typed_app && self.desktop.focused_editable() == Some(false) {
+        // an app listed in `type_apps` skips the writability check; an
+        // explicit method = "paste" skips it too, because that setting
+        // promises to always paste.
+        if s.method == InsertMethod::Auto && !typed_app && self.desktop.focused_editable() == Some(false) {
             return self.clipboard_fallback(&text, "No text field is focused; the text is on the clipboard".into());
         }
         let method = match s.method {
@@ -513,6 +517,16 @@ mod tests {
         ins.desktop.editable = Some(false);
         let out = ins.insert(&InsertRequest { id: 2, text: "gg".into(), original: None, settings: s });
         assert_eq!(out, InsertOutcome::Inserted { method: "type", app: "explorer.exe".into() });
+    }
+
+    #[test]
+    fn explicit_paste_method_pastes_even_when_nothing_is_writable() {
+        let mut s = settings();
+        s.method = InsertMethod::Paste;
+        let mut ins = inserter(Some(win(1, "explorer.exe")));
+        ins.desktop.editable = Some(false);
+        let out = ins.insert(&InsertRequest { id: 6, text: "force it".into(), original: None, settings: s });
+        assert_eq!(out, InsertOutcome::Inserted { method: "paste", app: "explorer.exe".into() });
     }
 
     #[test]

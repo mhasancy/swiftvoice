@@ -90,7 +90,7 @@ type_apps = []             # e.g. ["game.exe"] always receive typed text
 
 [overlay]
 enabled = true
-position = "bottom"        # where the dot sits: bottom | top | bottom-left | top-left
+position = "bottom"        # where the dot sits: left (middle of the left edge) | bottom | top | bottom-left | top-left
 opacity = 0.94             # 0.0 .. 1.0; very low = a faint dot
 hide_after_ms = 900
 "#;

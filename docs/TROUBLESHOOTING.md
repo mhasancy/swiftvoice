@@ -62,6 +62,10 @@ a global hotkey.
   right-click > *Run as administrator*. Autostart does not do that.
 - Full-screen exclusive games can swallow input. Try `type_apps` or
   windowed mode.
+- If nothing is typed and the dot flashes **amber**, Windows reported no
+  text field where your cursor is: the text is on the clipboard, press
+  Ctrl+V. Set `insertion.method = "paste"` to force a paste into that app
+  anyway, or add its exe to `insertion.type_apps` to have the text typed.
 
 **AltGr / international keyboards.** Ctrl+Alt is the same as AltGr on many
 layouts, so Ctrl+Alt+V may clash with typing a character. Choose a shortcut

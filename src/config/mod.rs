@@ -347,6 +347,8 @@ impl Default for InsertionConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OverlayPosition {
+    /// Middle of the left edge of the work area.
+    Left,
     Bottom,
     Top,
     BottomLeft,
@@ -669,6 +671,8 @@ mod tests {
         let cfg = Config::from_toml_str("[overlay]\nposition = \"bottom-left\"\nopacity = 0.05\n").unwrap();
         assert_eq!(cfg.overlay.position, OverlayPosition::BottomLeft);
         assert_eq!(cfg.overlay.opacity, 0.05);
+        let cfg = Config::from_toml_str("[overlay]\nposition = \"left\"\n").unwrap();
+        assert_eq!(cfg.overlay.position, OverlayPosition::Left);
     }
 
     #[test]

@@ -1,5 +1,5 @@
-//! Win32 overlay window. While you dictate a small bare dot sits in the
-//! corner of the monitor you are working on: red while recording (its size
+//! Win32 overlay window. While you dictate a small bare dot sits on the
+//! monitor you are working on: red while recording (its size
 //! follows your voice), amber while the text is recognised, then a short
 //! flash in the result's color - green when the text was inserted, amber
 //! when it went to the clipboard instead, red for failures.
@@ -155,9 +155,10 @@ impl Overlay {
         }
     }
 
-    /// Place the dot at its corner of the monitor that holds the foreground
-    /// window: bottom or bottom-left put it above the taskbar on the left,
-    /// top or top-left under the top edge.
+    /// Place the dot at its spot on the monitor that holds the foreground
+    /// window: `left` sits in the middle of the left edge, bottom or
+    /// bottom-left above the taskbar on the left, top or top-left under the
+    /// top edge.
     unsafe fn place(&mut self) {
         let fg = GetForegroundWindow();
         let monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTOPRIMARY);
@@ -175,6 +176,7 @@ impl Overlay {
         let margin = (20.0 * scale) as i32;
         let x = work.left + margin;
         let y = match self.position {
+            OverlayPosition::Left => work.top + (work.bottom - work.top - side) / 2,
             OverlayPosition::Bottom | OverlayPosition::BottomLeft => work.bottom - side - margin,
             OverlayPosition::Top | OverlayPosition::TopLeft => work.top + margin,
         };
