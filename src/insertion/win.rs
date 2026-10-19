@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+use windows::Win32::System::Variant::{VariantClear, VariantToBoolean, VT_BOOL};
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern, UIA_ComboBoxControlTypeId, UIA_DocumentControlTypeId,
-    UIA_EditControlTypeId, UIA_ValuePatternId, UIA_CONTROLTYPE_ID,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationValuePattern, UIA_ComboBoxControlTypeId,
+    UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_IsReadOnlyAttributeId, UIA_TextPatternId, UIA_ValuePatternId, UIA_CONTROLTYPE_ID,
 };
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, GlobalFree, ERROR_ACCESS_DENIED, HANDLE, HWND};
 use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
@@ -209,26 +210,30 @@ fn uia_focused_reads_text() -> Option<bool> {
     }
 }
 
-/// The read-only flag of the focused element's Value pattern, if it has one.
+/// Rich document editors can expose TextPattern without ValuePattern.
 fn value_is_read_only(element: &IUIAutomationElement) -> Option<bool> {
     // SAFETY: plain UIA client call; an unsupported pattern returns an error.
-    let pattern: IUIAutomationValuePattern = unsafe { element.GetCurrentPatternAs(UIA_ValuePatternId) }.ok()?;
-    unsafe { pattern.CurrentIsReadOnly() }.ok().map(|b| b.as_bool())
+    unsafe {
+        if let Ok(pattern) = element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) {
+            if let Ok(read_only) = pattern.CurrentIsReadOnly() {
+                return Some(read_only.as_bool());
+            }
+        }
+        let pattern: IUIAutomationTextPattern = element.GetCurrentPatternAs(UIA_TextPatternId).ok()?;
+        let mut value = pattern.DocumentRange().ok()?.GetAttributeValue(UIA_IsReadOnlyAttributeId).ok()?;
+        let result = if value.Anonymous.Anonymous.vt == VT_BOOL { VariantToBoolean(&value).ok().map(|b| b.as_bool()) } else { None };
+        let _ = VariantClear(&mut value);
+        result
+    }
 }
 
 /// Only a real editable text control can take dictated text:
 /// - `Edit` and `ComboBox` are text fields; a read-only one cannot take it;
-/// - a `Document` is an editor only when it is writable (a web page body,
-///   a PDF viewer or a read-only view reports itself read-only);
+/// - a `Document` can receive text unless it reports itself read-only;
 /// - everything else - panes, lists, buttons, the window itself - cannot.
 fn textable(control_type: UIA_CONTROLTYPE_ID, read_only: Option<bool>) -> bool {
-    if control_type == UIA_EditControlTypeId || control_type == UIA_ComboBoxControlTypeId {
-        read_only != Some(true)
-    } else if control_type == UIA_DocumentControlTypeId {
-        read_only == Some(false)
-    } else {
-        false
-    }
+    (control_type == UIA_EditControlTypeId || control_type == UIA_ComboBoxControlTypeId || control_type == UIA_DocumentControlTypeId)
+        && read_only != Some(true)
 }
 
 impl Desktop for WinDesktop {
@@ -603,7 +608,7 @@ mod tests {
         assert!(!textable(UIA_ComboBoxControlTypeId, Some(true)));
         assert!(textable(UIA_DocumentControlTypeId, Some(false)), "a writable document is a text field");
         assert!(!textable(UIA_DocumentControlTypeId, Some(true)), "a web page body reports itself read-only");
-        assert!(!textable(UIA_DocumentControlTypeId, None), "a document with no value pattern is not an editor");
+        assert!(textable(UIA_DocumentControlTypeId, None), "unknown document editability must not block a paste");
         assert!(!textable(UIA_PaneControlTypeId, None));
         assert!(!textable(UIA_ListItemControlTypeId, None));
         assert!(!textable(UIA_TextControlTypeId, None));
