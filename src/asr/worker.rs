@@ -140,6 +140,8 @@ struct Worker {
 }
 
 const MAX_LOADED: usize = 2;
+const MAX_PENDING_JOBS: usize = 32;
+const MAX_PENDING_SAMPLES: usize = 60 * 16_000;
 
 impl Worker {
     fn new(config: WorkerConfig, sink: WorkerSink) -> Worker {
@@ -196,7 +198,41 @@ impl Worker {
         match msg {
             WorkerMsg::Job(job) => {
                 if !self.cancelled_upto.contains(&job.session) {
-                    self.pending.push_back(job);
+                    let same_window =
+                        |o: &AsrJob| o.session == job.session && o.key.utterance == job.key.utterance && o.key.window == job.key.window;
+                    if job.kind != SnapshotKind::Partial
+                        && self.pending.iter().any(|o| same_window(o) && o.kind != SnapshotKind::Partial && o.key.end > job.key.end)
+                    {
+                        return true;
+                    }
+                    self.pending.retain(|o| {
+                        if job.kind == SnapshotKind::Partial {
+                            o.kind != SnapshotKind::Partial || o.session != job.session
+                        } else {
+                            !same_window(o) || (o.kind != SnapshotKind::Partial && o.key.end > job.key.end)
+                        }
+                    });
+                    let fits = |pending: &VecDeque<AsrJob>| {
+                        pending.len() < MAX_PENDING_JOBS
+                            && pending.iter().map(|j| j.audio.len()).sum::<usize>() + job.audio.len() <= MAX_PENDING_SAMPLES
+                    };
+                    if !fits(&self.pending) && job.kind != SnapshotKind::Partial {
+                        self.pending.retain(|o| o.kind != SnapshotKind::Partial);
+                    }
+                    if fits(&self.pending) {
+                        self.pending.push_back(job);
+                    } else if job.kind != SnapshotKind::Partial {
+                        (self.sink)(WorkerEvent::Output(AsrOutput {
+                            session: job.session,
+                            key: job.key,
+                            kind: job.kind,
+                            model: job.model,
+                            result: Err("The recogniser is too far behind; stop dictation and wait for it to finish.".into()),
+                            queue_ms: job.enqueued.elapsed().as_millis() as u32,
+                            compute_ms: 0,
+                            audio_ms: (job.audio.len() as u64 * 1000 / 16_000) as u32,
+                        }));
+                    }
                 }
             }
             WorkerMsg::CancelSession(s) => {
@@ -432,6 +468,39 @@ mod tests {
         assert!(w.next_job().is_none(), "late jobs of a cancelled session are ignored");
         w.handle(WorkerMsg::Job(job(8, 0, 0, 20, SnapshotKind::Final)));
         assert_eq!(w.next_job().unwrap().session, 8);
+    }
+
+    #[test]
+    fn overload_bounds_pending_audio_and_reports_required_jobs() {
+        use std::sync::Mutex;
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let collected = errors.clone();
+        let mut w = worker();
+        w.sink = Box::new(move |event| {
+            if let WorkerEvent::Output(o) = event {
+                collected.lock().unwrap().push(o);
+            }
+        });
+        for window in 0..=MAX_PENDING_JOBS as u32 {
+            w.handle(WorkerMsg::Job(job(1, 0, window, 100, SnapshotKind::Final)));
+        }
+        assert_eq!(w.pending.len(), MAX_PENDING_JOBS);
+        assert_eq!(errors.lock().unwrap().len(), 1);
+        assert!(errors.lock().unwrap()[0].result.is_err());
+        w.pending.clear();
+        for window in 0..2 {
+            let mut j = job(2, 0, window, 600_000, SnapshotKind::Final);
+            j.audio = Arc::from(vec![0.0; 600_000]);
+            w.handle(WorkerMsg::Job(j));
+        }
+        assert_eq!(w.pending.len(), 1, "audio duration must also be bounded");
+        assert_eq!(errors.lock().unwrap().len(), 2);
+        w.pending.clear();
+        for end in 1..=100 {
+            w.handle(WorkerMsg::Job(job(3, 0, 0, end, SnapshotKind::Pause)));
+        }
+        assert_eq!(w.pending.len(), 1, "superseded snapshots must not consume the budget");
+        assert_eq!(w.pending[0].key.end, 100);
     }
 
     #[test]
