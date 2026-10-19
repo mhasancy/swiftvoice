@@ -127,13 +127,14 @@ pub fn is_elevated() -> bool {
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "SwiftVoice";
 
-fn autostart_command() -> String {
+fn autostart_command(config_path: &Path) -> String {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("swiftvoice.exe"));
-    format!("\"{}\"", exe.display())
+    let config = std::path::absolute(config_path).unwrap_or_else(|_| config_path.to_path_buf());
+    format!("\"{}\" --config \"{}\"", exe.display(), config.display())
 }
 
 /// Whether HKCU\...\Run points at this executable.
-pub fn autostart_enabled() -> bool {
+pub fn autostart_enabled(config_path: &Path) -> bool {
     let key = wide(RUN_KEY);
     let name = wide(RUN_VALUE);
     let mut buf = vec![0u16; 2048];
@@ -146,11 +147,11 @@ pub fn autostart_enabled() -> bool {
         return false;
     }
     let len = buf.iter().position(|&c| c == 0).unwrap_or(0);
-    String::from_utf16_lossy(&buf[..len]).eq_ignore_ascii_case(&autostart_command())
+    String::from_utf16_lossy(&buf[..len]).eq_ignore_ascii_case(&autostart_command(config_path))
 }
 
 /// Add or remove the per-user "run at sign-in" entry (no admin rights).
-pub fn set_autostart(enable: bool) -> Result<(), String> {
+pub fn set_autostart(enable: bool, config_path: &Path) -> Result<(), String> {
     let key = wide(RUN_KEY);
     let name = wide(RUN_VALUE);
     unsafe {
@@ -160,7 +161,7 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
             return Err(format!("cannot open the Run registry key (error {r})"));
         }
         let r = if enable {
-            let value = wide(autostart_command());
+            let value = wide(autostart_command(config_path));
             RegSetValueExW(hkey, name.as_ptr(), 0, REG_SZ, value.as_ptr().cast(), (value.len() * 2) as u32)
         } else {
             match RegDeleteValueW(hkey, name.as_ptr()) {
@@ -218,5 +219,16 @@ impl Drop for SingleInstance {
         unsafe {
             CloseHandle(self.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn autostart_keeps_the_absolute_config_path() {
+        let config = Path::new("settings with spaces/custom.toml");
+        let absolute = std::path::absolute(config).unwrap();
+        assert!(autostart_command(config).ends_with(&format!(" --config \"{}\"", absolute.display())));
     }
 }

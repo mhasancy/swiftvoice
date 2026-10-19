@@ -355,6 +355,9 @@ pub fn run(args: &BenchArgs, config: &Config) -> Result<BenchReport> {
     let commit_after_secs = args.commit_after_secs.unwrap_or(config.asr.commit_after_secs);
     crate::asr::runtime::set_low_memory(low_memory);
     let language = args.language.clone().unwrap_or_else(|| config.asr.language.clone());
+    if !catalog::is_valid_language_setting(&language) {
+        bail!("--language must be auto or a two-letter ISO 639-1 code (en, de, bn, ...)");
+    }
     let lang_hint = (language != "auto").then_some(language.as_str());
 
     let input = wav::read_wav(&args.audio)?;

@@ -31,6 +31,13 @@ jobs:
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           if ("v$version" -ne $env:GITHUB_REF_NAME) { throw "tag $env:GITHUB_REF_NAME does not match the Cargo.toml version $version" }
+          if (-not (Test-Path "docs/releases/$version.md")) { throw "release notes for $version are missing" }
+      - name: Format and lint
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo clippy --all-targets --locked --features whisper -- -D warnings
       - name: Build, test and package
         shell: pwsh
         run: ./scripts/build-windows.ps1
@@ -43,4 +50,7 @@ jobs:
           # Also attach the bare program: updating an existing install is
           # copying this single file over SwiftVoice\swiftvoice.exe.
           $exe = Copy-Item dist/SwiftVoice/swiftvoice.exe "dist/SwiftVoice-$($env:GITHUB_REF_NAME.TrimStart('v'))-win-x64.exe" -PassThru
-          gh release create $env:GITHUB_REF_NAME $zip.FullName $exe.FullName --title $env:GITHUB_REF_NAME --generate-notes
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $releaseArgs = @($env:GITHUB_REF_NAME, $zip.FullName, $exe.FullName, "$($zip.FullName).sha256", '--title', $env:GITHUB_REF_NAME, '--verify-tag', '--notes-file', "docs/releases/$version.md")
+          if ($version.Contains('-')) { $releaseArgs += @('--prerelease', '--latest=false') }
+          gh release create @releaseArgs

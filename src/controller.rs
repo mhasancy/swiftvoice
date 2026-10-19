@@ -50,7 +50,7 @@ pub trait Ui {
 pub trait Ports {
     fn audio(&self, cmd: AudioCmd);
     fn asr(&self, msg: WorkerMsg) -> bool;
-    fn insert(&self, req: InsertRequest);
+    fn insert(&self, req: InsertRequest, clipboard_only: bool) -> Result<(), String>;
     /// Run Smart post-processing off the UI thread; deliver the result as
     /// `AppEvent::Postprocessed`.
     #[allow(clippy::too_many_arguments)]
@@ -113,6 +113,10 @@ pub struct Controller<U: Ui, P: Ports> {
     utterances: BTreeMap<(u64, u32), Utterance>,
     next_session: u64,
     next_insert: u64,
+    in_flight: Option<(u64, (u64, u32))>,
+    insertion_stalled: bool,
+    retry_clipboard: Option<(u64, u32)>,
+    pending_worker: Option<WorkerConfig>,
     devices: Vec<String>,
     models: HashMap<String, ModelState>,
     download: Option<(String, Arc<AtomicBool>)>,
@@ -140,6 +144,10 @@ impl<U: Ui, P: Ports> Controller<U, P> {
             utterances: BTreeMap::new(),
             next_session: 1,
             next_insert: 1,
+            in_flight: None,
+            insertion_stalled: false,
+            retry_clipboard: None,
+            pending_worker: None,
             devices: Vec::new(),
             models: HashMap::new(),
             download: None,
@@ -261,6 +269,7 @@ impl<U: Ui, P: Ports> Controller<U, P> {
             }
             AppEvent::SessionLocked => self.cancel_capture("Dictation stopped (the session was locked)"),
         }
+        self.sync_worker();
         self.refresh_status();
     }
 
@@ -316,9 +325,28 @@ impl<U: Ui, P: Ports> Controller<U, P> {
 
     fn drop_session_utterances(&mut self, session: u64) {
         self.utterances.retain(|(s, _), _| *s != session);
+        if self.retry_clipboard.is_some_and(|(s, _)| s == session) {
+            self.retry_clipboard = None;
+        }
     }
 
     fn start_session(&mut self, mode: SessionMode) {
+        if self.insertion_stalled {
+            self.insertion_stalled = false;
+            self.retry_clipboard = self.utterances.keys().next().copied();
+            if self.retry_clipboard.is_some() {
+                self.flush_ready();
+                return;
+            }
+        }
+        if self.pending_worker.is_some() {
+            self.ui.notify("Settings are pending", "Wait for the current dictation to finish before starting again.", Tone::Info);
+            return;
+        }
+        if self.utterances.len() >= 32 {
+            self.ui.notify("Insertion is busy", "Wait for the pending dictation to finish before starting again.", Tone::Warning);
+            return;
+        }
         let dir = self.cfg.models_dir();
         let language = self.cfg.asr.language.clone();
         let model = match catalog::route(&language, &self.cfg.asr.model, &self.cfg.asr.fallback_model) {
@@ -515,6 +543,13 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                     self.show(OverlayView::Processing { text }, None);
                 }
                 self.try_complete(session, utterance);
+                if self.utterances.len() >= 32 {
+                    if let Some(c) = self.capture.as_mut().filter(|c| !c.finishing) {
+                        c.finishing = true;
+                        self.ports.audio(AudioCmd::Finish { session: c.session, tail_ms: 0 });
+                        self.ui.notify("Insertion is busy", "Dictation stopped while the pending text is inserted.", Tone::Warning);
+                    }
+                }
             }
             SegEvent::NoSpeech => {
                 self.show(OverlayView::Message { text: "No speech detected".into(), tone: Tone::Info }, Some(1500));
@@ -632,13 +667,16 @@ impl<U: Ui, P: Ports> Controller<U, P> {
 
     /// Insert finished utterances in order.
     fn flush_ready(&mut self) {
+        if self.in_flight.is_some() || self.insertion_stalled {
+            return;
+        }
         loop {
             let Some((&key, u)) = self.utterances.iter().next() else { return };
             if u.stage != Stage::Ready {
                 return;
             }
-            let u = self.utterances.remove(&key).expect("key exists");
-            match u.output {
+            let original = u.original;
+            match u.output.clone() {
                 Some(Ok(result)) => {
                     if let Some(note) = &result.note {
                         let n = format!("Smart mode unavailable, inserted the Clean text: {note}");
@@ -646,7 +684,8 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                             self.ui.notify("Smart mode", &n, Tone::Warning);
                         }
                     }
-                    if result.text.trim().is_empty() {
+                    if result.text.is_empty() {
+                        self.utterances.remove(&key);
                         self.show(OverlayView::Message { text: "Didn't catch that".into(), tone: Tone::Info }, Some(1200));
                         continue;
                     }
@@ -656,26 +695,61 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                     if !still_listening {
                         self.show(OverlayView::Processing { text: tail_text(&result.text, 120) }, None);
                     }
-                    self.ports.insert(InsertRequest {
-                        id,
-                        text: result.text,
-                        original: u.original,
-                        settings: InsertSettings::from_config(&self.cfg.insertion),
-                    });
+                    let request =
+                        InsertRequest { id, text: result.text, original, settings: InsertSettings::from_config(&self.cfg.insertion) };
+                    let clipboard_only = self.retry_clipboard == Some(key);
+                    if clipboard_only {
+                        self.retry_clipboard = None;
+                    }
+                    match self.ports.insert(request, clipboard_only) {
+                        Ok(()) => self.in_flight = Some((id, key)),
+                        Err(e) => {
+                            self.insertion_stalled = true;
+                            self.ui.notify(
+                                "Could not queue the text",
+                                &format!("{e}. Press the dictation shortcut to recover it to the clipboard."),
+                                Tone::Error,
+                            );
+                        }
+                    }
+                    return;
                 }
                 Some(Err(e)) => {
+                    self.utterances.remove(&key);
                     self.show(
                         OverlayView::Message { text: format!("Transcription failed: {}", tail_text(&e, 100)), tone: Tone::Error },
                         Some(5000),
                     );
                     self.ui.notify("Transcription failed", &e, Tone::Error);
                 }
-                None => {}
+                None => {
+                    self.utterances.remove(&key);
+                }
             }
         }
     }
 
     fn on_inserted(&mut self, r: InsertReport) {
+        let Some((id, key)) = self.in_flight else {
+            return;
+        };
+        if id != r.id {
+            return;
+        }
+        self.in_flight = None;
+        let retained = self.utterances.contains_key(&key);
+        if !retained {
+            self.flush_ready();
+            return;
+        }
+        if retained && matches!(&r.outcome, InsertOutcome::Failed(_)) {
+            self.insertion_stalled = true;
+        } else {
+            self.utterances.remove(&key);
+        }
+        if retained && matches!(&r.outcome, InsertOutcome::Clipboard { .. }) {
+            self.insertion_stalled = true;
+        }
         let listening = self.capture.is_some();
         match r.outcome {
             InsertOutcome::Inserted { .. } => {
@@ -691,14 +765,22 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                     OverlayView::Result { text: "Copied to clipboard".into(), tone: Tone::Warning, detail: Some(reason.clone()) },
                     Some(5000),
                 );
-                self.ui.notify("Text copied to the clipboard", &reason, Tone::Warning);
+                self.ui.notify(
+                    "Text copied to the clipboard",
+                    &format!("{reason}. Paste this text before pressing the dictation shortcut to recover any remaining text."),
+                    Tone::Warning,
+                );
             }
             InsertOutcome::Failed(e) => {
                 self.show(
                     OverlayView::Message { text: format!("Could not insert: {}", tail_text(&e, 100)), tone: Tone::Error },
                     Some(5000),
                 );
-                self.ui.notify("Could not insert the text", &e, Tone::Error);
+                self.ui.notify(
+                    "Could not insert the text",
+                    &format!("{e}. Your text is retained. Press the dictation shortcut to recover it to the clipboard."),
+                    Tone::Error,
+                );
             }
             InsertOutcome::Empty => {
                 if !listening {
@@ -706,6 +788,7 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                 }
             }
         }
+        self.flush_ready();
     }
 
     // ----- tray commands -------------------------------------------------
@@ -729,8 +812,17 @@ impl<U: Ui, P: Ports> Controller<U, P> {
             }
             TrayCommand::ResetHotkeys => {
                 let d = HotkeyConfig::default();
-                self.set("hotkeys", "push_to_talk", Setting::Str(d.push_to_talk));
-                self.set("hotkeys", "toggle", Setting::Str(d.toggle));
+                match config::update_settings(
+                    &self.config_path,
+                    vec![
+                        ("hotkeys", "push_to_talk", Setting::Str(d.push_to_talk)),
+                        ("hotkeys", "toggle", Setting::Str(d.toggle)),
+                        ("hotkeys", "cancel", Setting::Str(d.cancel)),
+                    ],
+                ) {
+                    Ok(cfg) => self.apply_config(cfg, self.vocab.clone()),
+                    Err(e) => self.ui.notify("Cannot reset hotkeys", &format!("{e:#}"), Tone::Error),
+                }
             }
             TrayCommand::SelectMicrophone(name) => self.set("audio", "device", Setting::Str(name)),
             TrayCommand::ToggleNoiseSuppression => {
@@ -853,10 +945,11 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                         let display = catalog::find(&model).map(|m| m.display).unwrap_or("Model");
                         self.ui.notify("Download complete", &format!("{display} is installed."), Tone::Success);
                         self.models.remove(&model);
-                        self.ports.asr(WorkerMsg::Configure(Self::worker_config(&self.cfg, &self.vocab)));
+                        self.pending_worker = Some(Self::worker_config(&self.cfg, &self.vocab));
+                        self.sync_worker();
                         if model == "silero-vad" {
                             self.ports.audio(AudioCmd::Configure(Self::capture_settings(&self.cfg)));
-                        } else if model == self.cfg.asr.model || model == self.cfg.asr.fallback_model {
+                        } else if self.pending_worker.is_none() && (model == self.cfg.asr.model || model == self.cfg.asr.fallback_model) {
                             self.models.insert(model.clone(), ModelState::Loading);
                             self.ports.asr(WorkerMsg::Preload(model.clone()));
                         }
@@ -875,6 +968,23 @@ impl<U: Ui, P: Ports> Controller<U, P> {
     }
 
     // ----- configuration -------------------------------------------------
+
+    fn sync_worker(&mut self) {
+        if self.capture.is_some() || !self.utterances.is_empty() {
+            return;
+        }
+        let Some(cfg) = self.pending_worker.as_ref() else {
+            return;
+        };
+        if self.ports.asr(WorkerMsg::Configure(cfg.clone())) {
+            self.pending_worker = None;
+            self.models.clear();
+            if let Some(info) = catalog::find(&self.cfg.asr.model).filter(|info| download::is_installed(&self.cfg.models_dir(), info)) {
+                self.models.insert(info.id.into(), ModelState::Loading);
+                self.ports.asr(WorkerMsg::Preload(info.id.into()));
+            }
+        }
+    }
 
     fn reload_config(&mut self) {
         let cfg = match Config::load_or_create(&self.config_path) {
@@ -912,10 +1022,10 @@ impl<U: Ui, P: Ports> Controller<U, P> {
         }
         let new_worker = Self::worker_config(&self.cfg, &self.vocab);
         if Self::worker_config(&old, &self.vocab) != new_worker || vocab_changed {
-            self.ports.asr(WorkerMsg::Configure(new_worker));
-            self.models.clear();
+            self.pending_worker = Some(new_worker);
+            self.sync_worker();
         }
-        if old.asr.model != self.cfg.asr.model || !self.models.contains_key(&self.cfg.asr.model) {
+        if self.pending_worker.is_none() && (old.asr.model != self.cfg.asr.model || !self.models.contains_key(&self.cfg.asr.model)) {
             let dir = self.cfg.models_dir();
             if let Some(info) = catalog::find(&self.cfg.asr.model) {
                 if download::is_installed(&dir, info) {
@@ -996,6 +1106,8 @@ mod tests {
         listening: Vec<bool>,
         downloads: Vec<String>,
         asked: Vec<String>,
+        reject_insert: bool,
+        clipboard_requests: Vec<bool>,
     }
 
     #[derive(Clone, Default)]
@@ -1051,8 +1163,13 @@ mod tests {
             self.0 .0.borrow_mut().asr.push(msg);
             true
         }
-        fn insert(&self, req: InsertRequest) {
+        fn insert(&self, req: InsertRequest, clipboard_only: bool) -> Result<(), String> {
+            if self.0 .0.borrow().reject_insert {
+                return Err("insertion is unavailable".into());
+            }
             self.0 .0.borrow_mut().inserts.push(req);
+            self.0 .0.borrow_mut().clipboard_requests.push(clipboard_only);
+            Ok(())
         }
         fn smart(&self, _s: u64, _u: u32, raw: String, _p: Arc<PostProcessor>, _l: Option<String>, _e: bool) {
             self.0 .0.borrow_mut().smart.push(raw);
@@ -1171,6 +1288,157 @@ mod tests {
     }
 
     #[test]
+    fn newline_commands_reach_insertion_and_failed_handoffs_retain_text() {
+        let (mut c, log, dir) = setup(PostMode::Clean);
+        log.0.borrow_mut().reject_insert = true;
+        c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
+        c.handle(seg(1, SegEvent::SpeechStart { utterance: 0 }));
+        c.handle(snap(1, 0, 0, 1000, SnapshotKind::Pause));
+        c.handle(output(1, 0, 0, 1000, SnapshotKind::Pause, "new paragraph"));
+        c.handle(seg(
+            1,
+            SegEvent::UtteranceEnd {
+                utterance: 0,
+                last: Some(SnapKey { utterance: 0, window: 0, end: 1000 }),
+                reason: EndReason::Endpoint,
+            },
+        ));
+        assert!(log.0.borrow().inserts.is_empty());
+        assert_eq!(c.utterances.len(), 1, "a failed handoff must retain the output");
+        assert!(c.insertion_stalled);
+        let mut cfg = c.config().clone();
+        cfg.asr.threads = 2;
+        c.apply_config(cfg, vec![]);
+        c.handle(AppEvent::Audio(AudioEvent::Ended { session: 1 }));
+        assert!(c.pending_worker.is_some());
+        log.0.borrow_mut().reject_insert = false;
+        c.handle(AppEvent::Hotkey(HotkeyEvent::PttDown));
+        assert_eq!(log.0.borrow().inserts[0].text, "\n\n");
+        assert!(log.0.borrow().clipboard_requests[0], "deliberate retries recover through the clipboard");
+        assert_eq!(c.utterances.len(), 1, "output stays retained until acknowledgement");
+        c.handle(AppEvent::Inserted(InsertReport { id: 2, outcome: InsertOutcome::Failed("clipboard busy".into()), elapsed_ms: 0 }));
+        assert_eq!(c.utterances.len(), 1, "failed clipboard recovery must also retain the output");
+        assert!(c.insertion_stalled);
+        c.handle(AppEvent::Hotkey(HotkeyEvent::PttDown));
+        assert!(log.0.borrow().clipboard_requests[1]);
+        c.handle(AppEvent::Inserted(InsertReport {
+            id: 3,
+            outcome: InsertOutcome::Clipboard { reason: "recovered".into() },
+            elapsed_ms: 0,
+        }));
+        assert!(c.utterances.is_empty());
+        assert!(c.pending_worker.is_none(), "successful recovery must unblock deferred settings");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn worker_settings_wait_until_current_dictation_is_acknowledged() {
+        let (mut c, log, dir) = setup(PostMode::Raw);
+        c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
+        c.handle(seg(1, SegEvent::SpeechStart { utterance: 0 }));
+        c.handle(snap(1, 0, 0, 1000, SnapshotKind::Pause));
+        let mut cfg = c.config().clone();
+        cfg.general.models_dir = dir.join("new-models").display().to_string();
+        c.apply_config(cfg, vec![]);
+        assert!(c.pending_worker.is_some());
+        assert!(!log.0.borrow().asr.iter().any(|m| matches!(m, WorkerMsg::Configure(_))));
+        c.handle(output(1, 0, 0, 1000, SnapshotKind::Pause, "kept from the original model"));
+        c.handle(seg(
+            1,
+            SegEvent::UtteranceEnd {
+                utterance: 0,
+                last: Some(SnapKey { utterance: 0, window: 0, end: 1000 }),
+                reason: EndReason::Endpoint,
+            },
+        ));
+        c.handle(AppEvent::Audio(AudioEvent::Ended { session: 1 }));
+        assert!(c.pending_worker.is_some());
+        c.handle(AppEvent::Hotkey(HotkeyEvent::PttDown));
+        assert!(!c.is_listening(), "new sessions must wait for deferred settings");
+        c.handle(AppEvent::Inserted(InsertReport {
+            id: 1,
+            outcome: InsertOutcome::Inserted { method: "paste", app: "test.exe".into() },
+            elapsed_ms: 0,
+        }));
+        assert!(c.pending_worker.is_none());
+        assert!(log.0.borrow().asr.iter().any(|m| matches!(m, WorkerMsg::Configure(cfg) if cfg.models_dir == dir.join("new-models"))));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn clipboard_results_wait_for_deliberate_recovery_before_replacing_each_other() {
+        let (mut c, log, dir) = setup(PostMode::Raw);
+        c.cfg.vad.continuous = true;
+        c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
+        for (utterance, text) in [(0, "one"), (1, "two")] {
+            c.handle(seg(1, SegEvent::SpeechStart { utterance }));
+            c.handle(snap(1, utterance, 0, 1000, SnapshotKind::Pause));
+            c.handle(output(1, utterance, 0, 1000, SnapshotKind::Pause, text));
+            c.handle(seg(
+                1,
+                SegEvent::UtteranceEnd { utterance, last: Some(SnapKey { utterance, window: 0, end: 1000 }), reason: EndReason::Endpoint },
+            ));
+        }
+        c.handle(AppEvent::Inserted(InsertReport {
+            id: 1,
+            outcome: InsertOutcome::Clipboard { reason: "no target".into() },
+            elapsed_ms: 0,
+        }));
+        assert_eq!(log.0.borrow().inserts.len(), 1, "a later result must not overwrite the recoverable clipboard");
+        assert_eq!(c.utterances.len(), 1);
+        c.handle(AppEvent::Audio(AudioEvent::Ended { session: 1 }));
+        c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
+        assert_eq!(log.0.borrow().inserts[1].text, "two");
+        assert!(log.0.borrow().clipboard_requests[1]);
+        c.handle(AppEvent::Inserted(InsertReport {
+            id: 2,
+            outcome: InsertOutcome::Clipboard { reason: "recovered".into() },
+            elapsed_ms: 0,
+        }));
+        c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
+        assert!(c.is_listening(), "after recovery, the shortcut starts new dictation normally");
+        assert_eq!(c.retry_clipboard, None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn late_failure_for_cancelled_output_does_not_affect_new_dictation() {
+        let (mut c, log, dir) = setup(PostMode::Raw);
+        c.cfg.vad.continuous = true;
+        c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
+        c.handle(seg(1, SegEvent::SpeechStart { utterance: 0 }));
+        c.handle(snap(1, 0, 0, 1000, SnapshotKind::Pause));
+        c.handle(output(1, 0, 0, 1000, SnapshotKind::Pause, "cancelled"));
+        c.handle(seg(
+            1,
+            SegEvent::UtteranceEnd {
+                utterance: 0,
+                last: Some(SnapKey { utterance: 0, window: 0, end: 1000 }),
+                reason: EndReason::Endpoint,
+            },
+        ));
+        c.handle(AppEvent::Hotkey(HotkeyEvent::Cancel));
+        c.handle(AppEvent::Inserted(InsertReport { id: 1, outcome: InsertOutcome::Failed("late failure".into()), elapsed_ms: 0 }));
+        assert!(!c.insertion_stalled);
+        assert_eq!(c.retry_clipboard, None);
+        c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
+        assert!(c.is_listening());
+        c.handle(seg(2, SegEvent::SpeechStart { utterance: 0 }));
+        c.handle(snap(2, 0, 0, 1000, SnapshotKind::Pause));
+        c.handle(output(2, 0, 0, 1000, SnapshotKind::Pause, "new words"));
+        c.handle(seg(
+            2,
+            SegEvent::UtteranceEnd {
+                utterance: 0,
+                last: Some(SnapKey { utterance: 0, window: 0, end: 1000 }),
+                reason: EndReason::Endpoint,
+            },
+        ));
+        assert!(!log.0.borrow().clipboard_requests[1]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn long_dictation_joins_committed_windows_in_order() {
         let (mut c, log, dir) = setup(PostMode::Raw);
         c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
@@ -1215,6 +1483,12 @@ mod tests {
         c.handle(output(1, 1, 0, 1000, SnapshotKind::Pause, "two"));
         assert!(log.0.borrow().inserts.is_empty());
         c.handle(output(1, 0, 0, 1000, SnapshotKind::Pause, "one"));
+        assert_eq!(log.0.borrow().inserts.len(), 1, "only one insertion may be outstanding");
+        c.handle(AppEvent::Inserted(InsertReport {
+            id: 1,
+            outcome: InsertOutcome::Inserted { method: "paste", app: "test.exe".into() },
+            elapsed_ms: 0,
+        }));
         let texts: Vec<String> = log.0.borrow().inserts.iter().map(|r| r.text.clone()).collect();
         assert_eq!(texts, vec!["one", "two"]);
         assert!(c.is_listening(), "continuous mode keeps listening");

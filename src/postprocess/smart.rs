@@ -214,8 +214,8 @@ impl SmartRewriter {
         let timeout = Duration::from_millis(self.cfg.timeout_ms as u64);
         let (status, body) = post_json(&self.url, &self.path(), &self.request_body(text, language), timeout)?;
         if status != 200 {
-            let snippet: String = body.chars().take(200).collect();
-            bail!("local model server answered HTTP {status}: {snippet}");
+            log::trace!("local model server error response: {body}");
+            bail!("local model server answered HTTP {status}");
         }
         let v: Value = serde_json::from_str(&body).context("local model server returned invalid JSON")?;
         let content = match self.cfg.provider {
@@ -226,7 +226,9 @@ impl SmartRewriter {
         .context("local model server response has no message content")?;
         let cleaned = strip_model_artifacts(content);
         check_plausible(text, &cleaned)?;
-        Ok(cleaned)
+        let leading = text.len() - text.trim_start_matches('\n').len();
+        let trailing = text.len() - text.trim_end_matches('\n').len();
+        Ok(format!("{}{}{}", &text[..leading], cleaned, &text[text.len() - trailing..]))
     }
 }
 
@@ -355,6 +357,24 @@ mod tests {
         let r = SmartRewriter::new(&cfg(&format!("{url}/v1"), SmartProvider::Openai, 3000)).unwrap();
         assert_eq!(r.rewrite("ok", None).unwrap(), "Ok.");
         assert!(server.join().unwrap().starts_with("POST /v1/chat/completions"));
+    }
+
+    #[test]
+    fn server_errors_do_not_expose_response_content() {
+        let body = "synthetic private dictation";
+        let response = format!("HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        let (url, server) = serve_once(response.into_bytes(), 0);
+        let r = SmartRewriter::new(&cfg(&url, SmartProvider::Ollama, 3000)).unwrap();
+        assert_eq!(r.rewrite(body, None).unwrap_err().to_string(), "local model server answered HTTP 400");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn smart_rewrite_keeps_command_newlines() {
+        let (url, server) = serve_once(json_response(r#"{"message":{"content":"Hello there."}}"#), 0);
+        let r = SmartRewriter::new(&cfg(&url, SmartProvider::Ollama, 3000)).unwrap();
+        assert_eq!(r.rewrite("\nhello there\n\n", None).unwrap(), "\nHello there.\n\n");
+        server.join().unwrap();
     }
 
     #[test]
