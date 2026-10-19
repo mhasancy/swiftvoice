@@ -223,10 +223,10 @@ impl WinPorts {
     /// the normal insertion card instead of dropping the dictation
     /// silently.
     fn report_dropped(&self, req: InsertRequest, problem: &str, waited: Duration) {
-        let outcome = if req.text.trim().is_empty() {
+        let outcome = if req.text.trim().is_empty() && !req.text.contains('\n') {
             InsertOutcome::Empty
         } else {
-            match WinClipboard::default().set_text(&req.text, false) {
+            match WinClipboard::default().set_text(&req.text, true) {
                 Ok(_) => InsertOutcome::Clipboard { reason: format!("{problem}. The text is on the clipboard; press Ctrl+V") },
                 Err(e) => InsertOutcome::Failed(format!("{problem}, and the clipboard could not be set ({e:#})")),
             }

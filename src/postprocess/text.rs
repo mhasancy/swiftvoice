@@ -174,7 +174,7 @@ pub fn render(pieces: &[Piece]) -> String {
             }
         }
     }
-    out.trim().to_string()
+    out
 }
 
 #[cfg(test)]

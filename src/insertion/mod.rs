@@ -160,7 +160,7 @@ impl<D: Desktop, C: ClipboardBackend> Inserter<D, C> {
 
     fn clipboard_fallback(&mut self, text: &str, reason: String) -> InsertOutcome {
         self.flush_restore();
-        match self.clipboard.set_text(text, false) {
+        match self.clipboard.set_text(text, true) {
             Ok(_) => InsertOutcome::Clipboard { reason },
             Err(e) => InsertOutcome::Failed(format!("{reason}, and the clipboard could not be set: {e:#}")),
         }
@@ -169,7 +169,7 @@ impl<D: Desktop, C: ClipboardBackend> Inserter<D, C> {
     pub fn insert(&mut self, req: &InsertRequest) -> InsertOutcome {
         let s = &req.settings;
         let mut text = req.text.clone();
-        if text.trim().is_empty() {
+        if text.trim().is_empty() && !text.contains('\n') {
             return InsertOutcome::Empty;
         }
         if s.append_space && !text.ends_with(['\n', ' ']) {
@@ -246,7 +246,7 @@ impl<D: Desktop, C: ClipboardBackend> Inserter<D, C> {
         } else {
             None
         };
-        let seq = match self.clipboard.set_text(&text, snapshot.is_some()) {
+        let seq = match self.clipboard.set_text(&text, true) {
             Ok(seq) => seq,
             Err(e) if s.method == InsertMethod::Auto => {
                 log::info!("cannot set the clipboard ({e:#}); typing instead");
@@ -493,7 +493,7 @@ mod tests {
         let mut ins = inserter(Some(admin));
         assert!(matches!(ins.insert(&req("x")), InsertOutcome::Clipboard { .. }));
         assert_eq!(ins.clipboard.text().unwrap(), "x ");
-        assert_eq!(ins.clipboard.history, vec!["x ".to_string()], "fallback text stays in history so it can be pasted");
+        assert!(ins.clipboard.history.is_empty(), "fallback dictation must stay out of history");
         let mut ins = inserter(None);
         assert!(matches!(ins.insert(&req("y")), InsertOutcome::Clipboard { .. }));
         let mut own = win(1, "swiftvoice.exe");
@@ -565,6 +565,8 @@ mod tests {
         assert_eq!(ins.insert(&req("   ")), InsertOutcome::Empty);
         ins.insert(&req("line\n"));
         assert_eq!(ins.clipboard.text().unwrap(), "line\n");
+        ins.insert(&req("\n\n"));
+        assert_eq!(ins.clipboard.text().unwrap(), "\n\n");
     }
 
     #[test]

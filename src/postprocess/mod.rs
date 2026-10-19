@@ -107,7 +107,7 @@ impl PostProcessor {
         let t = Instant::now();
         let cleaned = self.clean(raw, english);
         let clean_us = t.elapsed().as_micros() as u64;
-        if self.cfg.mode == PostMode::Clean || cleaned.is_empty() {
+        if self.cfg.mode == PostMode::Clean || cleaned.trim().is_empty() {
             return PostResult { text: cleaned, mode: PostMode::Clean, note: None, clean_us, smart_ms: 0 };
         }
         let t = Instant::now();
@@ -150,6 +150,16 @@ mod tests {
         // tests/MANUAL_TESTS.md C9.
         let r = pp(PostMode::Clean).process("first line new line second line new paragraph open bracket aside close bracket", None, true);
         assert_eq!(r.text, "First line\nSecond line\n\n(Aside)");
+    }
+
+    #[test]
+    fn voice_commands_preserve_boundary_newlines() {
+        for (spoken, expected) in [("new paragraph", "\n\n"), ("hello new line", "Hello\n"), ("new line hello", "\nHello")] {
+            assert_eq!(pp(PostMode::Clean).process(spoken, Some("en"), true).text, expected);
+        }
+        let result = pp(PostMode::Smart).process("new paragraph", Some("en"), true);
+        assert_eq!(result.text, "\n\n");
+        assert!(result.note.is_none(), "structural commands must not call the LLM");
     }
 
     #[test]

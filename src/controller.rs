@@ -646,7 +646,7 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                             self.ui.notify("Smart mode", &n, Tone::Warning);
                         }
                     }
-                    if result.text.trim().is_empty() {
+                    if result.text.is_empty() {
                         self.show(OverlayView::Message { text: "Didn't catch that".into(), tone: Tone::Info }, Some(1200));
                         continue;
                     }
