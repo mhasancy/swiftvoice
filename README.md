@@ -6,6 +6,11 @@ recognised on your own PC by NVIDIA's Parakeet models. No account, no cloud
 and no telemetry, and the network is never used after the one-time model
 download.
 
+This checkout is the `0.1.1-rc.1` release candidate. The reported English
+recognition issue still needs a representative failing recording; this
+candidate does not claim to fix it. See [testing evidence](docs/TESTING_EVIDENCE.md)
+and the [accuracy checks](docs/TROUBLESHOOTING.md#microphone).
+
 - **Push-to-talk** `Ctrl+Alt+Space` (hold) and **toggle** `Ctrl+Alt+V`
   (press, speak, pause). Both can be remapped from the tray.
 - **Fast:** in the measured runs, 24-125 ms (110M model) or 216-515 ms
@@ -35,7 +40,7 @@ SwiftVoice works differently:
 |---|---|
 | Where speech is recognised | on your CPU; audio never leaves the PC |
 | Network during dictation | none; works offline and on planes |
-| Waiting after you stop | only the last phrase. Audio is transcribed during your pauses, and long dictation is committed at pauses, so there is no upload round trip and no queue |
+| Waiting after you stop | usually only the last phrase. Audio is transcribed during pauses, and long dictation is committed at pauses, so most work can finish before key release |
 | Runtime | one native exe (Win32 tray + overlay) plus ONNX Runtime; no browser engine |
 | Account / telemetry | none / none (ONNX Runtime's own telemetry is switched off too) |
 | Cost | free; models are CC-BY-4.0 / MIT |
@@ -47,6 +52,8 @@ targets, are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 ## Install
 
 ### From a release zip
+
+Windows 10/11 x64; the packaged Whisper fallback requires an AVX2-capable CPU.
 
 1. Download the latest `SwiftVoice-<version>-win-x64.zip` from the
    [Releases](https://github.com/mhasancy/swiftvoice/releases) page.

@@ -1132,7 +1132,7 @@ checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
 
 [[package]]
 name = "swiftvoice"
-version = "0.1.0"
+version = "0.1.1-rc.1"
 dependencies = [
  "anyhow",
  "bzip2",

@@ -5,6 +5,38 @@ Executed results only, newest first. Benchmark tables are in
 [../tests/MANUAL_TESTS.md](../tests/MANUAL_TESTS.md). Results from CI are on
 the pull requests and the Actions tab.
 
+## 2026-10-20 — 0.1.1-rc.1 Windows release candidate
+
+Run locally on Windows x64, Intel Core i5-12400 (12 logical CPUs), Rust
+1.99.0 and Visual Studio 18/MSVC. The complete package includes Whisper,
+Microsoft ONNX Runtime 1.31.0, app-local VC++ runtime DLLs, licences and
+release notes. Models and build tools remain outside the package.
+
+| Check | Result |
+|---|---|
+| `scripts/build-windows.ps1` with strict model-test fixtures | Pass. Native release build, 176 unit tests, 2 real-model tests covering 9 model/clip cases, doc tests and packaged-executable smoke checks |
+| Final format and lint | `cargo fmt --all -- --check`, `git diff --check`, and `cargo clippy --release --all-targets --locked --offline --features whisper -- -D warnings`: pass |
+| Real-model cases | Parakeet v3: en/de/es/fr/0/1; Parakeet CTC 110M: 0/1/en. All expected transcripts match after test normalization. Missing fixtures fail through `SWIFTVOICE_TEST_STRICT=1` |
+| Feature parity | Skipped: `SWIFTVOICE_FEATURE_REF` is absent. Its successful test status does not establish numerical feature parity |
+| English pipeline benchmark | Public `en.wav`, 3.85 s: 0% raw and simulated push-to-talk WER on 17 reference words. Four repetitions with 300 ms gaps, 16.58 s: 0% on 68 words through 4 recognizer jobs. Silero, Raw mode, noise suppression off; clipboard insertion is simulated |
+| Whisper smoke test | The pinned `whisper-base` model loads and transcribes the public English reference phrase correctly. This does not evaluate the default turbo model or Bengali accuracy |
+| Native CPU target | CMake cache verifies `GGML_NATIVE=OFF`, `GGML_AVX2=ON`, `GGML_AVX512=OFF`. The packager clears the native fallback cache because whisper-rs-sys does not track these flags for Cargo reuse |
+| Runtime and launcher smoke tests | Version `0.1.1-rc.1`; `.com` output/exit-code relay; packaged ONNX Runtime loads; telemetry disabled |
+| Locked dependency audit | `cargo audit`: 0 vulnerabilities and no informational warnings against 1,338 RustSec advisories (database commit `999ec89d5d3f10f20be14750ec8c2d8b44e0ac9b`, updated 2026-10-17) |
+| Package | `dist/SwiftVoice-0.1.1-rc.1-win-x64.zip`, approximately 8.9 MB; 24.9 MB extracted, models excluded. SHA-256 is in the adjacent `.zip.sha256` file |
+
+Pinned model archives, reference clips and the Microsoft runtime archive
+were verified before use. Reference outputs and benchmark JSON are under
+`target/golden-audio`; build logs and the audit result are under
+`target/release-tools`. An initial strict run failed because two reference
+WAV files were missing; after preparing those fixtures, all nine cases ran
+and passed. No microphone recording or user-clipboard operation was used.
+
+These public clips do not reproduce the user's reported English errors.
+The candidate keeps that issue open. Live microphone, target-application
+insertion, clipboard history, hotkeys, Narrator and sign-in behavior remain
+manual checks. No public release was published in this preparation.
+
 ## 2026-10-20 — review fixes on Windows
 
 Run locally on Windows x64 with Rust 1.99.0 and MSVC, on

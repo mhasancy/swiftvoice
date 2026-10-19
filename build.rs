@@ -15,7 +15,7 @@ mod icon_art {
 #[cfg(windows)]
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
-  <assemblyIdentity type="win32" name="SwiftVoice" version="0.1.0.0" processorArchitecture="*"/>
+  <assemblyIdentity type="win32" name="SwiftVoice" version="@VERSION@" processorArchitecture="*"/>
   <description>SwiftVoice offline voice typing</description>
   <dependency>
     <dependentAssembly>
@@ -61,7 +61,8 @@ fn main() {
 fn embed_resources(ico: &Path) {
     let mut res = winresource::WindowsResource::new();
     res.set_icon(&ico.to_string_lossy());
-    res.set_manifest(MANIFEST);
+    let version = format!("{}.{}.{}.0", env!("CARGO_PKG_VERSION_MAJOR"), env!("CARGO_PKG_VERSION_MINOR"), env!("CARGO_PKG_VERSION_PATCH"));
+    res.set_manifest(&MANIFEST.replace("@VERSION@", &version));
     res.set("FileDescription", "SwiftVoice offline voice typing");
     res.set("ProductName", "SwiftVoice");
     res.set("CompanyName", "SwiftVoice contributors");

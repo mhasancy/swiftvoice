@@ -109,6 +109,27 @@ with the toggle key).
 **False starts from background noise.** Turn on *Noise suppression*, raise
 `vad.threshold` to 0.6-0.7, or use push-to-talk.
 
+**Frequent missing or incorrect English words.** First use Raw mode and
+select the intended microphone explicitly. In a quiet room, compare noise
+suppression on and off. Keep a short recording and its exact intended
+transcript so each comparison uses the same speech:
+
+```powershell
+.\swiftvoice.com --record sample.wav --seconds 20
+.\swiftvoice.com --transcribe sample.wav --model parakeet-tdt-0.6b-v3 --language en --mode raw
+.\swiftvoice.com --benchmark --audio sample.wav --reference expected.txt --mode raw --runs 1
+```
+
+The recording command uses the microphone without the live denoiser or VAD.
+Direct transcription bypasses the dictation segmentation path; the
+benchmark also exercises the configured audio pipeline. If direct output
+is correct but segmented output loses words, investigate audio processing
+and window boundaries. If both are wrong, compare recording quality and
+models. After downloading it, compare `parakeet-tdt-0.6b-v2` on the same
+recording; English-only does not guarantee it will fit every voice better.
+Change one setting at a time and record the result. Test the rebuilt
+executable, since an older installed copy does not acquire source fixes.
+
 ## Text and insertion
 
 **Text appears in the wrong window.** By default text goes to the window
@@ -126,9 +147,12 @@ clipboard on every change can also stop the restore. In both cases the log
 says "clipboard changed after paste".
 
 **The dot flashes amber when insertion is busy or stopped.** The inserter
-thread could not take the text in time, so it was copied to the clipboard
-instead; press Ctrl+V. If every dictation says "Insertion stopped", the
-inserter thread has exited: restart SwiftVoice.
+could not accept or complete the request. The text stays in memory; press
+the dictation shortcut to retry through the clipboard, then paste it with
+Ctrl+V. A stopped worker is restarted automatically. Clipboard fallbacks
+pause remaining output until another deliberate shortcut press, so paste
+the current phrase before advancing. Quit only after recovering retained
+text, since it is not persisted to disk.
 
 **Typed text has wrong characters.** Remote-desktop clients and some games
 handle Unicode key events poorly. Use the default paste method for those

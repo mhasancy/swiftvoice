@@ -147,6 +147,14 @@ if (-not $NoWhisper) {
     }
     $env:LIBCLANG_PATH = $libclang
     Write-Host "    libclang: $libclang"
+    # Distributable builds must not inherit the build machine's instruction set.
+    $env:GGML_NATIVE = 'OFF'
+    $env:GGML_AVX = 'ON'
+    $env:GGML_AVX2 = 'ON'
+    foreach ($flag in 'GGML_AVX512', 'GGML_AVX512_VBMI', 'GGML_AVX512_VNNI', 'GGML_AVX512_BF16', 'GGML_AVX_VNNI') {
+        [Environment]::SetEnvironmentVariable($flag, 'OFF', 'Process')
+    }
+    Write-Host '    Whisper CPU target: AVX2 (no host-specific detection)'
 }
 
 # --- 2. Build and test ----------------------------------------------------
@@ -154,6 +162,10 @@ $features = @('--features', 'whisper')
 if ($NoWhisper) { $features = @('--no-default-features') }
 
 Step 'Building (release)'
+if (-not $NoWhisper) {
+    # whisper-rs-sys does not track GGML flags when reusing Cargo's build cache.
+    Invoke-Checked cargo @('clean', '--release', '-p', 'whisper-rs-sys')
+}
 Invoke-Checked cargo (@('build', '--release', '--locked') + $features)
 
 if (-not $SkipTests) {
@@ -253,10 +265,12 @@ Copy-Item (Join-Path $Root 'README.md'), (Join-Path $Root 'LICENSE') $pkg
 Copy-Item (Join-Path $ortDir 'LICENSE') (Join-Path $pkg 'licenses\ONNXRuntime-LICENSE.txt')
 Copy-Item (Join-Path $ortDir 'ThirdPartyNotices.txt') (Join-Path $pkg 'licenses\ONNXRuntime-ThirdPartyNotices.txt')
 Copy-Item (Join-Path $ortDir 'Privacy.md') (Join-Path $pkg 'licenses\ONNXRuntime-Privacy.md')
-foreach ($doc in 'CONFIGURATION.md', 'TROUBLESHOOTING.md', 'BENCHMARKS.md') {
+foreach ($doc in 'CONFIGURATION.md', 'TROUBLESHOOTING.md', 'BENCHMARKS.md', 'TESTING_EVIDENCE.md') {
     Copy-Item (Join-Path $Root "docs\$doc") (Join-Path $pkg 'docs')
 }
 Copy-Item (Join-Path $Root 'models\README.md') (Join-Path $pkg 'docs\MODELS.md')
+$releaseNotes = Join-Path $Root "docs\releases\$version.md"
+if (Test-Path -LiteralPath $releaseNotes) { Copy-Item -LiteralPath $releaseNotes -Destination (Join-Path $pkg 'RELEASE_NOTES.md') }
 
 # Licences of the Rust crates compiled into swiftvoice.exe (normal
 # dependencies for this target and feature set; build tools are not shipped).
@@ -296,6 +310,8 @@ Write-Host '    ONNX Runtime loads from the package; telemetry off'
 $zipOut = Join-Path $dist "SwiftVoice-$version-win-x64.zip"
 if (Test-Path $zipOut) { Remove-Item -Force $zipOut }
 Compress-Archive -Path $pkg -DestinationPath $zipOut -CompressionLevel Optimal
+$zipSha256 = Get-Sha256 $zipOut
+"$zipSha256  $(Split-Path -Leaf $zipOut)" | Set-Content -Encoding ASCII -LiteralPath "$zipOut.sha256"
 
 $installBytes = (Get-ChildItem -Recurse -File $pkg | Measure-Object -Sum Length).Sum
 $installMB = [math]::Round($installBytes / 1MB, 1)
@@ -303,7 +319,7 @@ $zipMB = [math]::Round((Get-Item $zipOut).Length / 1MB, 1)
 Step 'Done'
 Write-Host "    folder:   $pkg  ($installMB MB installed, models not included)"
 Write-Host "    archive:  $zipOut  ($zipMB MB)"
-Write-Host "    SHA-256:  $(Get-Sha256 $zipOut)"
+Write-Host "    SHA-256:  $zipSha256"
 Get-ChildItem $pkg -File | Sort-Object Length -Descending | ForEach-Object {
     Write-Host ("    {0,10:N0}  {1}" -f $_.Length, $_.Name)
 }
