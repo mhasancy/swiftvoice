@@ -385,7 +385,7 @@ impl Segmenter {
         // A forced cut happens mid-speech; a pause cut happens in silence.
         self.window_has_speech = self.speaking;
         self.speech_run = 0;
-        self.last_speech_end = 0;
+        self.last_speech_end = self.last_speech_end.saturating_sub(end);
         self.last_snapshot = None;
         self.frames_since_partial = 0;
     }
@@ -741,6 +741,38 @@ mod tests {
         assert_eq!(finals.len(), 1);
         assert_eq!(finals[0].key.end, quiet * F);
         assert_eq!(d.seg.buffered_samples(), (max - quiet) * F, "audio after the seam stays for the next window");
+    }
+
+    #[test]
+    fn finishing_after_a_forced_cut_preserves_every_speech_sample() {
+        for silence in [0, 10] {
+            let cfg = SegmenterConfig::from_ms(0.5, 200, None, 300, 6, None, None, None);
+            let max = cfg.max_window_frames as usize;
+            let mut d = Driver::new(cfg);
+            d.feed(max, 0.9);
+            d.feed(silence, 0.0);
+            d.seg.finish(&mut d.events);
+            let mut keys = d.commits();
+            keys.extend(d.ends()[0].1);
+            let audio: Vec<f32> = keys
+                .iter()
+                .flat_map(|key| {
+                    let snapshot = d
+                        .events
+                        .iter()
+                        .find_map(|e| match e {
+                            SegEvent::Snapshot(s) if s.key == *key => Some(s),
+                            _ => None,
+                        })
+                        .unwrap();
+                    snapshot.audio[snapshot.context..].iter().copied()
+                })
+                .collect();
+            assert!(audio.len() >= max * F);
+            for frame in 0..max {
+                assert!(audio[frame * F..(frame + 1) * F].iter().all(|&s| s == frame as f32), "lost speech frame {frame}");
+            }
+        }
     }
 
     #[test]
