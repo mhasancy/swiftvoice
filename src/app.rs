@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{Receiver, Sender};
@@ -33,9 +33,8 @@ use crate::config::{Config, HotkeyConfig, OverlayConfig};
 use crate::controller::{Controller, Ports, Ui};
 use crate::events::{AppEvent, DownloadEvent, HotkeyKind, TrayCommand};
 use crate::hotkey::win::{HotkeyRegistry, TIMER_PTT_POLL, WM_SV_HOTKEY};
-use crate::insertion::clipboard::ClipboardBackend;
 use crate::insertion::win::{WinClipboard, WinDesktop};
-use crate::insertion::{self, EnqueueError, InsertOutcome, InsertReport, InsertRequest, Inserter, InserterHandle, WindowHandle};
+use crate::insertion::{self, EnqueueError, InsertRequest, Inserter, InserterHandle, WindowHandle};
 use crate::overlay::win::Overlay;
 use crate::overlay::{OverlayView, Tone};
 use crate::platform::{self, wide};
@@ -148,7 +147,7 @@ impl Ui for WinUi {
 pub struct WinPorts {
     audio: AudioHandle,
     worker: WorkerHandle,
-    inserter: InserterHandle,
+    inserter: RefCell<InserterHandle>,
     sink: Sink,
 }
 
@@ -161,15 +160,18 @@ impl Ports for WinPorts {
         self.worker.send(msg)
     }
 
-    fn insert(&self, req: InsertRequest) {
-        let started = Instant::now();
-        if let Err(e) = self.inserter.send(req) {
-            let waited = started.elapsed();
-            let (req, problem) = match e {
-                EnqueueError::Full(req) => (req, "Insertion is busy"),
-                EnqueueError::Closed(req) => (req, "Insertion stopped (restart SwiftVoice)"),
-            };
-            self.report_dropped(*req, problem, waited);
+    fn insert(&self, req: InsertRequest) -> Result<(), String> {
+        let mut inserter = self.inserter.borrow_mut();
+        match inserter.send(req) {
+            Ok(()) => Ok(()),
+            Err(EnqueueError::Full(_)) => Err("Insertion is busy; your text is retained. Stop dictation and try again.".into()),
+            Err(EnqueueError::Closed(req)) => {
+                *inserter =
+                    Self::make_inserter(self.sink.clone()).map_err(|e| format!("Cannot restart insertion: {e}; your text is retained"))?;
+                inserter
+                    .copy_to_clipboard(*req, "Insertion restarted; the text is on the clipboard. Press Ctrl+V to paste it.".into())
+                    .map_err(|_| "Insertion could not recover; your text is retained".into())
+            }
         }
     }
 
@@ -217,22 +219,11 @@ impl Ports for WinPorts {
 }
 
 impl WinPorts {
-    /// The inserter could not take the request (the queue stayed full for
-    /// the whole wait, or its thread is gone): copy the text to the
-    /// clipboard so it stays recoverable, and report the outcome through
-    /// the normal insertion card instead of dropping the dictation
-    /// silently.
-    fn report_dropped(&self, req: InsertRequest, problem: &str, waited: Duration) {
-        let outcome = if req.text.trim().is_empty() && !req.text.contains('\n') {
-            InsertOutcome::Empty
-        } else {
-            match WinClipboard::default().set_text(&req.text, true) {
-                Ok(_) => InsertOutcome::Clipboard { reason: format!("{problem}. The text is on the clipboard; press Ctrl+V") },
-                Err(e) => InsertOutcome::Failed(format!("{problem}, and the clipboard could not be set ({e:#})")),
-            }
-        };
-        log::warn!("insertion was not queued ({problem}): {outcome:?}");
-        self.sink.send(AppEvent::Inserted(InsertReport { id: req.id, outcome, elapsed_ms: waited.as_millis() as u32 }));
+    fn make_inserter(sink: Sink) -> std::io::Result<InserterHandle> {
+        insertion::spawn(
+            || Inserter::new(WinDesktop::default(), WinClipboard::default()),
+            Box::new(move |report| sink.send(AppEvent::Inserted(report))),
+        )
     }
 }
 
@@ -621,13 +612,7 @@ pub fn run(config_path: &Path, verbose: bool, process_start: Instant) -> Result<
         let s = sink.clone();
         worker::spawn(Controller::<WinUi, WinPorts>::worker_config(&cfg, &vocab), Box::new(move |ev| s.send(AppEvent::Asr(ev))))?
     };
-    let inserter_handle = {
-        let s = sink.clone();
-        insertion::spawn(
-            || Inserter::new(WinDesktop::default(), WinClipboard::default()),
-            Box::new(move |r| s.send(AppEvent::Inserted(r))),
-        )?
-    };
+    let inserter_handle = RefCell::new(WinPorts::make_inserter(sink.clone())?);
 
     let mut tray = Tray::new(hwnd);
     if let Err(e) = tray.add() {

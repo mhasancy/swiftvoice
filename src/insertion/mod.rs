@@ -24,7 +24,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossbeam_channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender};
+use crossbeam_channel::{Receiver, Sender, TrySendError};
 
 use crate::config::{InsertMethod, InsertTarget, InsertionConfig};
 use crate::hotkey::Hotkey;
@@ -129,11 +129,12 @@ pub struct Inserter<D: Desktop, C: ClipboardBackend> {
     pub desktop: D,
     pub clipboard: C,
     pending: Option<PendingRestore>,
+    paste_due: Option<Instant>,
 }
 
 impl<D: Desktop, C: ClipboardBackend> Inserter<D, C> {
     pub fn new(desktop: D, clipboard: C) -> Self {
-        Inserter { desktop, clipboard, pending: None }
+        Inserter { desktop, clipboard, pending: None, paste_due: None }
     }
 
     /// Restore the clipboard if a scheduled restore is due.
@@ -143,12 +144,11 @@ impl<D: Desktop, C: ClipboardBackend> Inserter<D, C> {
         }
     }
 
-    pub fn has_pending_restore(&self) -> bool {
-        self.pending.is_some()
-    }
-
-    /// Restore immediately (before another paste, or at shutdown).
+    /// Let the target consume the paste before restoring or replacing it.
     pub fn flush_restore(&mut self) {
+        if let Some(due) = self.paste_due.take() {
+            std::thread::sleep(due.saturating_duration_since(Instant::now()));
+        }
         if let Some(p) = self.pending.take() {
             match perform_restore(&mut self.clipboard, p) {
                 RestoreOutcome::Restored => log::debug!("clipboard restored"),
@@ -263,6 +263,7 @@ impl<D: Desktop, C: ClipboardBackend> Inserter<D, C> {
         if let Some(snap) = snapshot {
             self.pending = Some(schedule(snap, seq, s.restore_delay));
         }
+        self.paste_due = Some(Instant::now() + s.restore_delay);
         InsertOutcome::Inserted { method: "paste", app: target.process }
     }
 
@@ -276,7 +277,7 @@ impl<D: Desktop, C: ClipboardBackend> Inserter<D, C> {
 
 /// Handle to the inserter thread.
 pub struct InserterHandle {
-    tx: Sender<InsertRequest>,
+    tx: Sender<InsertTask>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -286,39 +287,40 @@ pub struct InserterHandle {
 /// cold path.
 #[derive(Debug)]
 pub enum EnqueueError {
-    /// The queue stayed full for the whole wait.
+    /// The queue has no room.
     Full(Box<InsertRequest>),
     /// The inserter thread has exited (shutdown, or a panic).
     Closed(Box<InsertRequest>),
 }
 
-/// How long [`InserterHandle::send`] waits for room in the queue before the
-/// request comes back to the caller. The inserter thread works through
-/// requests one at a time (modifier wait, paste, scheduled restore), so a
-/// queue that is still full after this long is stuck, not merely busy.
-const ENQUEUE_WAIT: Duration = Duration::from_millis(2_000);
+enum InsertTask {
+    Insert(InsertRequest),
+    Clipboard(InsertRequest, String),
+}
+
+impl InsertTask {
+    fn request(self) -> InsertRequest {
+        match self {
+            Self::Insert(req) | Self::Clipboard(req, _) => req,
+        }
+    }
+}
 
 impl InserterHandle {
-    /// Hand `req` to the inserter thread, waiting up to `ENQUEUE_WAIT` for
-    /// room so a momentary backlog costs a little time, not the text. On
-    /// failure the request comes back: the caller must keep the text
-    /// recoverable (put it on the clipboard) and tell the user instead of
-    /// dropping it silently (see `WinPorts::insert`).
+    /// Nonblocking UI handoff. The caller retains the text until acknowledged.
     pub fn send(&self, req: InsertRequest) -> std::result::Result<(), EnqueueError> {
-        self.send_within(req, ENQUEUE_WAIT)
+        self.send_task(InsertTask::Insert(req))
     }
 
-    fn send_within(&self, req: InsertRequest, wait: Duration) -> std::result::Result<(), EnqueueError> {
-        match self.tx.send_timeout(req, wait) {
+    pub fn copy_to_clipboard(&self, req: InsertRequest, reason: String) -> std::result::Result<(), EnqueueError> {
+        self.send_task(InsertTask::Clipboard(req, reason))
+    }
+
+    fn send_task(&self, task: InsertTask) -> std::result::Result<(), EnqueueError> {
+        match self.tx.try_send(task) {
             Ok(()) => Ok(()),
-            Err(SendTimeoutError::Timeout(req)) => {
-                log::error!("insertion queue full for {wait:?}; text handed back to the caller");
-                Err(EnqueueError::Full(Box::new(req)))
-            }
-            Err(SendTimeoutError::Disconnected(req)) => {
-                log::error!("inserter thread exited; text handed back to the caller");
-                Err(EnqueueError::Closed(Box::new(req)))
-            }
+            Err(TrySendError::Full(task)) => Err(EnqueueError::Full(Box::new(task.request()))),
+            Err(TrySendError::Disconnected(task)) => Err(EnqueueError::Closed(Box::new(task.request()))),
         }
     }
 }
@@ -342,31 +344,30 @@ where
     C: ClipboardBackend + 'static,
     F: FnOnce() -> Inserter<D, C> + Send + 'static,
 {
-    let (tx, rx): (Sender<InsertRequest>, Receiver<InsertRequest>) = crossbeam_channel::bounded(32);
+    let (tx, rx): (Sender<InsertTask>, Receiver<InsertTask>) = crossbeam_channel::bounded(32);
     let join = std::thread::Builder::new().name("swiftvoice-insert".into()).spawn(move || {
         let mut inserter = make();
-        loop {
-            let wait = if inserter.has_pending_restore() { Duration::from_millis(20) } else { Duration::from_secs(3600) };
-            match rx.recv_timeout(wait) {
-                Ok(req) => {
-                    let started = Instant::now();
-                    let outcome = inserter.insert(&req);
-                    let elapsed_ms = started.elapsed().as_millis() as u32;
-                    match &outcome {
-                        InsertOutcome::Inserted { method, app } => {
-                            log::info!("inserted {} chars by {method} into {app} in {elapsed_ms} ms", req.text.chars().count())
-                        }
-                        other => log::warn!("insertion: {other:?}"),
-                    }
-                    report(InsertReport { id: req.id, outcome, elapsed_ms });
+        while let Ok(task) = rx.recv() {
+            let (req, reason) = match task {
+                InsertTask::Insert(req) => (req, None),
+                InsertTask::Clipboard(req, reason) => (req, Some(reason)),
+            };
+            let started = Instant::now();
+            let outcome = match reason {
+                Some(reason) => inserter.clipboard_fallback(&req.text, reason),
+                None => inserter.insert(&req),
+            };
+            inserter.flush_restore();
+            let elapsed_ms = started.elapsed().as_millis() as u32;
+            match &outcome {
+                InsertOutcome::Inserted { method, app } => {
+                    log::info!("inserted {} chars by {method} into {app} in {elapsed_ms} ms", req.text.chars().count())
                 }
-                Err(RecvTimeoutError::Timeout) => inserter.tick(),
-                Err(RecvTimeoutError::Disconnected) => {
-                    inserter.flush_restore();
-                    return;
-                }
+                other => log::warn!("insertion: {other:?}"),
             }
+            report(InsertReport { id: req.id, outcome, elapsed_ms });
         }
+        inserter.flush_restore();
     })?;
     Ok(InserterHandle { tx, join: Some(join) })
 }
@@ -455,11 +456,17 @@ mod tests {
 
     #[test]
     fn back_to_back_insertions_restore_the_original_clipboard() {
-        let mut ins = inserter(Some(win(1, "notepad.exe")));
-        ins.insert(&req("one"));
-        ins.insert(&req("two"));
-        ins.flush_restore();
-        assert_eq!(ins.clipboard.text().unwrap(), "precious clipboard");
+        for restore in [false, true] {
+            let mut ins = inserter(Some(win(1, "notepad.exe")));
+            let mut first = req("one");
+            first.settings.restore_clipboard = restore;
+            ins.insert(&first);
+            let due = ins.paste_due.unwrap();
+            ins.insert(&req("two"));
+            assert!(Instant::now() >= due, "the first paste's grace period must finish before replacement");
+            ins.flush_restore();
+            assert_eq!(ins.clipboard.text().unwrap(), if restore { "precious clipboard" } else { "one " });
+        }
     }
 
     #[test]
@@ -570,37 +577,20 @@ mod tests {
     }
 
     #[test]
-    fn send_waits_for_a_slow_consumer_instead_of_dropping() {
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        let h = InserterHandle { tx, join: None };
-        assert!(h.send_within(req("in flight"), Duration::from_millis(10)).is_ok());
-        let consumer = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(80));
-            // Take both requests before the receiver drops, or a send that
-            // waited for room races the drop and fails as closed.
-            let first = rx.recv().unwrap().text;
-            let second = rx.recv_timeout(Duration::from_secs(5)).expect("the queued request must arrive, not be dropped").text;
-            (first, second)
-        });
-        assert!(h.send_within(req("queued"), Duration::from_secs(5)).is_ok());
-        assert_eq!(consumer.join().unwrap(), ("in flight".to_string(), "queued".to_string()));
-    }
-
-    #[test]
-    fn send_returns_a_stuck_request_to_the_caller() {
+    fn send_returns_a_full_request_without_waiting() {
         let (tx, rx) = crossbeam_channel::bounded(2);
         let h = InserterHandle { tx, join: None };
-        assert!(h.send_within(req("one"), Duration::from_millis(10)).is_ok());
-        assert!(h.send_within(req("two"), Duration::from_millis(10)).is_ok());
+        assert!(h.send(req("one")).is_ok());
+        assert!(h.send(req("two")).is_ok());
         let started = Instant::now();
-        match h.send_within(req("three"), Duration::from_millis(60)) {
+        match h.send(req("three")) {
             Err(EnqueueError::Full(r)) => assert_eq!(r.text, "three"),
             Ok(()) => panic!("a full queue must time out, not accept the request"),
             Err(EnqueueError::Closed(_)) => panic!("the channel is still open"),
         }
-        assert!(started.elapsed() >= Duration::from_millis(50), "a full queue must be waited on, not failed at once");
-        assert_eq!(rx.recv().unwrap().text, "one");
-        assert!(h.send_within(req("three"), Duration::from_millis(10)).is_ok());
+        assert!(started.elapsed() < Duration::from_millis(100), "the UI handoff must not block");
+        assert_eq!(rx.recv().unwrap().request().text, "one");
+        assert!(h.send(req("three")).is_ok());
     }
 
     #[test]
@@ -608,10 +598,28 @@ mod tests {
         let (tx, rx) = crossbeam_channel::bounded(2);
         let h = InserterHandle { tx, join: None };
         drop(rx);
-        match h.send_within(req("gone"), Duration::from_millis(10)) {
+        match h.send(req("gone")) {
             Err(EnqueueError::Closed(r)) => assert_eq!(r.text, "gone"),
             Ok(()) => panic!("a dropped receiver must not accept the request"),
             Err(EnqueueError::Full(_)) => panic!("a dropped receiver fails at once"),
         }
+    }
+
+    #[test]
+    fn worker_acknowledges_after_paste_grace_and_serializes_recovery() {
+        let (tx, rx) = crossbeam_channel::bounded(2);
+        let h = spawn(|| inserter(Some(win(1, "notepad.exe"))), Box::new(move |r| tx.send(r).unwrap())).unwrap();
+        let mut first = req("one");
+        first.settings.restore_clipboard = false;
+        first.settings.restore_delay = Duration::from_millis(80);
+        let start = Instant::now();
+        h.send(first).unwrap();
+        let mut recovery = req("two");
+        recovery.id = 2;
+        h.copy_to_clipboard(recovery, "recoverable".into()).unwrap();
+        let report = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(report.id, 1);
+        assert!(start.elapsed() >= Duration::from_millis(80));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap().outcome, InsertOutcome::Clipboard { reason: "recoverable".into() });
     }
 }

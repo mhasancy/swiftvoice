@@ -50,7 +50,7 @@ pub trait Ui {
 pub trait Ports {
     fn audio(&self, cmd: AudioCmd);
     fn asr(&self, msg: WorkerMsg) -> bool;
-    fn insert(&self, req: InsertRequest);
+    fn insert(&self, req: InsertRequest) -> Result<(), String>;
     /// Run Smart post-processing off the UI thread; deliver the result as
     /// `AppEvent::Postprocessed`.
     #[allow(clippy::too_many_arguments)]
@@ -113,6 +113,8 @@ pub struct Controller<U: Ui, P: Ports> {
     utterances: BTreeMap<(u64, u32), Utterance>,
     next_session: u64,
     next_insert: u64,
+    in_flight: Option<(u64, (u64, u32))>,
+    insertion_stalled: bool,
     devices: Vec<String>,
     models: HashMap<String, ModelState>,
     download: Option<(String, Arc<AtomicBool>)>,
@@ -140,6 +142,8 @@ impl<U: Ui, P: Ports> Controller<U, P> {
             utterances: BTreeMap::new(),
             next_session: 1,
             next_insert: 1,
+            in_flight: None,
+            insertion_stalled: false,
             devices: Vec::new(),
             models: HashMap::new(),
             download: None,
@@ -319,6 +323,17 @@ impl<U: Ui, P: Ports> Controller<U, P> {
     }
 
     fn start_session(&mut self, mode: SessionMode) {
+        if self.insertion_stalled {
+            self.insertion_stalled = false;
+            self.flush_ready();
+            if self.insertion_stalled {
+                return;
+            }
+        }
+        if self.utterances.len() >= 32 {
+            self.ui.notify("Insertion is busy", "Wait for the pending dictation to finish before starting again.", Tone::Warning);
+            return;
+        }
         let dir = self.cfg.models_dir();
         let language = self.cfg.asr.language.clone();
         let model = match catalog::route(&language, &self.cfg.asr.model, &self.cfg.asr.fallback_model) {
@@ -515,6 +530,13 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                     self.show(OverlayView::Processing { text }, None);
                 }
                 self.try_complete(session, utterance);
+                if self.utterances.len() >= 32 {
+                    if let Some(c) = self.capture.as_mut().filter(|c| !c.finishing) {
+                        c.finishing = true;
+                        self.ports.audio(AudioCmd::Finish { session: c.session, tail_ms: 0 });
+                        self.ui.notify("Insertion is busy", "Dictation stopped while the pending text is inserted.", Tone::Warning);
+                    }
+                }
             }
             SegEvent::NoSpeech => {
                 self.show(OverlayView::Message { text: "No speech detected".into(), tone: Tone::Info }, Some(1500));
@@ -632,13 +654,16 @@ impl<U: Ui, P: Ports> Controller<U, P> {
 
     /// Insert finished utterances in order.
     fn flush_ready(&mut self) {
+        if self.in_flight.is_some() || self.insertion_stalled {
+            return;
+        }
         loop {
             let Some((&key, u)) = self.utterances.iter().next() else { return };
             if u.stage != Stage::Ready {
                 return;
             }
-            let u = self.utterances.remove(&key).expect("key exists");
-            match u.output {
+            let original = u.original;
+            match u.output.clone() {
                 Some(Ok(result)) => {
                     if let Some(note) = &result.note {
                         let n = format!("Smart mode unavailable, inserted the Clean text: {note}");
@@ -647,6 +672,7 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                         }
                     }
                     if result.text.is_empty() {
+                        self.utterances.remove(&key);
                         self.show(OverlayView::Message { text: "Didn't catch that".into(), tone: Tone::Info }, Some(1200));
                         continue;
                     }
@@ -656,26 +682,39 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                     if !still_listening {
                         self.show(OverlayView::Processing { text: tail_text(&result.text, 120) }, None);
                     }
-                    self.ports.insert(InsertRequest {
-                        id,
-                        text: result.text,
-                        original: u.original,
-                        settings: InsertSettings::from_config(&self.cfg.insertion),
-                    });
+                    let request =
+                        InsertRequest { id, text: result.text, original, settings: InsertSettings::from_config(&self.cfg.insertion) };
+                    match self.ports.insert(request) {
+                        Ok(()) => self.in_flight = Some((id, key)),
+                        Err(e) => {
+                            self.insertion_stalled = true;
+                            self.ui.notify("Could not queue the text", &e, Tone::Error);
+                        }
+                    }
+                    return;
                 }
                 Some(Err(e)) => {
+                    self.utterances.remove(&key);
                     self.show(
                         OverlayView::Message { text: format!("Transcription failed: {}", tail_text(&e, 100)), tone: Tone::Error },
                         Some(5000),
                     );
                     self.ui.notify("Transcription failed", &e, Tone::Error);
                 }
-                None => {}
+                None => {
+                    self.utterances.remove(&key);
+                }
             }
         }
     }
 
     fn on_inserted(&mut self, r: InsertReport) {
+        if let Some((id, key)) = self.in_flight {
+            if id == r.id {
+                self.in_flight = None;
+                self.utterances.remove(&key);
+            }
+        }
         let listening = self.capture.is_some();
         match r.outcome {
             InsertOutcome::Inserted { .. } => {
@@ -706,6 +745,7 @@ impl<U: Ui, P: Ports> Controller<U, P> {
                 }
             }
         }
+        self.flush_ready();
     }
 
     // ----- tray commands -------------------------------------------------
@@ -996,6 +1036,7 @@ mod tests {
         listening: Vec<bool>,
         downloads: Vec<String>,
         asked: Vec<String>,
+        reject_insert: bool,
     }
 
     #[derive(Clone, Default)]
@@ -1051,8 +1092,12 @@ mod tests {
             self.0 .0.borrow_mut().asr.push(msg);
             true
         }
-        fn insert(&self, req: InsertRequest) {
+        fn insert(&self, req: InsertRequest) -> Result<(), String> {
+            if self.0 .0.borrow().reject_insert {
+                return Err("insertion is unavailable".into());
+            }
             self.0 .0.borrow_mut().inserts.push(req);
+            Ok(())
         }
         fn smart(&self, _s: u64, _u: u32, raw: String, _p: Arc<PostProcessor>, _l: Option<String>, _e: bool) {
             self.0 .0.borrow_mut().smart.push(raw);
@@ -1171,6 +1216,33 @@ mod tests {
     }
 
     #[test]
+    fn newline_commands_reach_insertion_and_failed_handoffs_retain_text() {
+        let (mut c, log, dir) = setup(PostMode::Clean);
+        log.0.borrow_mut().reject_insert = true;
+        c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
+        c.handle(seg(1, SegEvent::SpeechStart { utterance: 0 }));
+        c.handle(snap(1, 0, 0, 1000, SnapshotKind::Pause));
+        c.handle(output(1, 0, 0, 1000, SnapshotKind::Pause, "new paragraph"));
+        c.handle(seg(
+            1,
+            SegEvent::UtteranceEnd {
+                utterance: 0,
+                last: Some(SnapKey { utterance: 0, window: 0, end: 1000 }),
+                reason: EndReason::Endpoint,
+            },
+        ));
+        assert!(log.0.borrow().inserts.is_empty());
+        assert_eq!(c.utterances.len(), 1, "a failed handoff must retain the output");
+        assert!(c.insertion_stalled);
+        log.0.borrow_mut().reject_insert = false;
+        c.insertion_stalled = false;
+        c.flush_ready();
+        assert_eq!(log.0.borrow().inserts[0].text, "\n\n");
+        assert_eq!(c.utterances.len(), 1, "output stays retained until acknowledgement");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn long_dictation_joins_committed_windows_in_order() {
         let (mut c, log, dir) = setup(PostMode::Raw);
         c.handle(AppEvent::Hotkey(HotkeyEvent::Toggle));
@@ -1215,6 +1287,12 @@ mod tests {
         c.handle(output(1, 1, 0, 1000, SnapshotKind::Pause, "two"));
         assert!(log.0.borrow().inserts.is_empty());
         c.handle(output(1, 0, 0, 1000, SnapshotKind::Pause, "one"));
+        assert_eq!(log.0.borrow().inserts.len(), 1, "only one insertion may be outstanding");
+        c.handle(AppEvent::Inserted(InsertReport {
+            id: 1,
+            outcome: InsertOutcome::Inserted { method: "paste", app: "test.exe".into() },
+            elapsed_ms: 0,
+        }));
         let texts: Vec<String> = log.0.borrow().inserts.iter().map(|r| r.text.clone()).collect();
         assert_eq!(texts, vec!["one", "two"]);
         assert!(c.is_listening(), "continuous mode keeps listening");
