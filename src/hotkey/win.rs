@@ -237,6 +237,7 @@ impl HotkeyRegistry {
     /// (Re)register the configured shortcuts. Returns a combined message
     /// for any that could not be registered (the others still work).
     pub fn apply(&mut self, cfg: &HotkeyConfig) -> Result<(), String> {
+        let cancel_active = self.cancel_active;
         self.unregister_all();
         let mut errors = Vec::new();
         let mut parse = |name: &str, s: &str, allow_escape: bool| -> Option<Hotkey> {
@@ -269,6 +270,7 @@ impl HotkeyRegistry {
         if let Err(e) = self.sync_hook() {
             errors.push(e);
         }
+        self.set_cancel_active(cancel_active);
         log::info!(
             "hotkeys: push-to-talk {}, toggle {}, cancel {}",
             self.ptt.map(|h| h.to_string()).unwrap_or_else(|| "off".into()),
@@ -312,7 +314,11 @@ impl HotkeyRegistry {
     /// Register the cancel shortcut only while dictating, so Escape keeps
     /// working normally in every app the rest of the time.
     pub fn set_cancel_active(&mut self, active: bool) {
-        if active == self.cancel_active || self.suspended {
+        if self.suspended {
+            self.cancel_active = active;
+            return;
+        }
+        if active == self.cancel_active {
             return;
         }
         match (active, self.cancel) {
@@ -331,7 +337,9 @@ impl HotkeyRegistry {
 
     /// Temporarily release every shortcut (while capturing a new one).
     pub fn suspend(&mut self) {
+        let cancel_active = self.cancel_active;
         self.unregister_all();
+        self.cancel_active = cancel_active;
         self.suspended = true;
         if let Err(e) = self.sync_hook() {
             log::warn!("{e}");
@@ -407,5 +415,17 @@ mod tests {
         let alt_ralt = Hotkey::new(Modifiers { alt: true, ..Modifiers::default() }, vk::RMENU);
         assert!(HeldMods { alt_left: true, ..HeldMods::default() }.matches(&alt_ralt));
         assert!(!HeldMods { alt_right: true, ..HeldMods::default() }.matches(&alt_ralt));
+    }
+
+    #[test]
+    fn suspended_hotkey_updates_preserve_the_requested_listening_state() {
+        let mut registry = HotkeyRegistry::new(null_mut());
+        registry.suspended = true;
+        registry.set_cancel_active(true);
+        let cfg = HotkeyConfig { push_to_talk: String::new(), toggle: String::new(), cancel: String::new(), ..Default::default() };
+        registry.apply(&cfg).unwrap();
+        assert!(registry.cancel_active);
+        registry.set_cancel_active(false);
+        assert!(!registry.cancel_active, "ending dictation inside the dialog must clear the requested cancel key");
     }
 }

@@ -482,7 +482,10 @@ impl Config {
             errs.push("asr.model must not be empty".into());
         }
         if !crate::asr::catalog::is_valid_language_setting(&self.asr.language) {
-            errs.push(format!("asr.language = \"{}\" must be \"auto\" or a two- or three-letter language code", self.asr.language));
+            errs.push(format!(
+                "asr.language = \"{}\" must be \"auto\" or a two-letter ISO 639-1 code (en, de, bn, ...)",
+                self.asr.language
+            ));
         }
         range_u32(&mut errs, "asr.threads", self.asr.threads, 0, 64);
         range_u32(&mut errs, "asr.commit_after_secs", self.asr.commit_after_secs, 4, 25);
@@ -558,14 +561,21 @@ pub enum Setting {
 /// Update one key (e.g. `("audio", "device")` or `("postprocess.smart",
 /// "model")`) in place, keeping comments and layout, then re-validate.
 pub fn update_setting(path: &Path, table: &str, key: &str, value: Setting) -> Result<Config> {
-    let text = if path.exists() {
+    update_settings(path, vec![(table, key, value)])
+}
+
+/// Validate interdependent changes together before replacing the config file.
+pub fn update_settings(path: &Path, settings: Vec<(&str, &str, Setting)>) -> Result<Config> {
+    let mut text = if path.exists() {
         fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?
     } else {
         DEFAULT_CONFIG_TOML.to_string()
     };
-    let new_text = apply_setting(&text, table, key, value)?;
-    let cfg = Config::from_toml_str(&new_text).with_context(|| format!("refusing to write an invalid value for {table}.{key}"))?;
-    write_atomic(path, new_text.as_bytes()).with_context(|| format!("cannot write {}", path.display()))?;
+    for (table, key, value) in settings {
+        text = apply_setting(&text, table, key, value)?;
+    }
+    let cfg = Config::from_toml_str(&text).context("refusing to write invalid settings")?;
+    write_atomic(path, text.as_bytes()).with_context(|| format!("cannot write {}", path.display()))?;
     Ok(cfg)
 }
 
@@ -729,6 +739,30 @@ mod tests {
         // An invalid value is refused and the file is left unchanged.
         assert!(update_setting(&path, "vad", "threshold", Setting::Float(9.0)).is_err());
         assert_eq!(Config::load_or_create(&path).unwrap().vad.threshold, 0.5);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hotkey_reset_is_validated_and_saved_as_one_change() {
+        let dir = crate::paths::test_dir("hotkey_reset");
+        let path = dir.join("config.toml");
+        fs::write(&path, "# preserved\n[hotkeys]\npush_to_talk = \"Ctrl+Alt+Q\"\ntoggle = \"Ctrl+Alt+Space\"\ncancel = \"Ctrl+Alt+V\"\n")
+            .unwrap();
+        let d = HotkeyConfig::default();
+        let cfg = update_settings(
+            &path,
+            vec![
+                ("hotkeys", "push_to_talk", Setting::Str(d.push_to_talk.clone())),
+                ("hotkeys", "toggle", Setting::Str(d.toggle.clone())),
+                ("hotkeys", "cancel", Setting::Str(d.cancel.clone())),
+            ],
+        )
+        .unwrap();
+        assert_eq!(cfg.hotkeys, d);
+        assert!(fs::read_to_string(&path).unwrap().starts_with("# preserved"));
+        let previous = fs::read_to_string(&path).unwrap();
+        assert!(update_setting(&path, "hotkeys", "toggle", Setting::Str(d.push_to_talk)).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), previous, "invalid batches must leave the saved config intact");
         let _ = fs::remove_dir_all(dir);
     }
 }

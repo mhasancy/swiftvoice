@@ -266,7 +266,8 @@ impl Pipeline {
     fn apply_settings(&mut self, s: CaptureSettings) {
         let device_changed = s.device != self.settings.device;
         let dsp_changed = s.gain_db != self.settings.gain_db || s.noise_suppression != self.settings.noise_suppression;
-        let vad_changed = s.vad != self.settings.vad;
+        let vad_changed =
+            s.vad != self.settings.vad || (self.vad_warning_sent && s.vad.silero_model.as_ref().is_some_and(|path| path.is_file()));
         self.settings = s;
         if vad_changed {
             self.processor = None;
@@ -626,6 +627,41 @@ mod tests {
         assert_eq!(session_summary(7, 500, 2, 0), "session 7: 16.0 s of audio, 2 microphone glitches");
         assert_eq!(session_summary(7, 32, 0, 1), "session 7: 1.0 s of audio, 1 sample dropped");
         assert_eq!(session_summary(7, 200, 1, 480), "session 7: 6.4 s of audio, 1 microphone glitch, 480 samples dropped");
+    }
+
+    #[test]
+    fn installed_vad_invalidates_the_cached_fallback_without_changing_settings() {
+        struct CachedFallback;
+        impl Vad for CachedFallback {
+            fn speech_prob(&mut self, _: &[f32]) -> anyhow::Result<f32> {
+                Ok(0.0)
+            }
+            fn reset(&mut self) {}
+            fn name(&self) -> &'static str {
+                "cached fallback"
+            }
+        }
+        let dir = crate::paths::test_dir("vad_install");
+        let path = dir.join("silero_vad.onnx");
+        let settings = CaptureSettings {
+            device: "test".into(),
+            gain_db: 0.0,
+            noise_suppression: false,
+            keep_warm_secs: 15,
+            pre_roll_ms: 0,
+            vad: VadChoice { engine: crate::config::VadEngine::Silero, silero_model: Some(path.clone()), energy_margin_db: 6.0 },
+        };
+        let mut p = Pipeline::new(settings.clone(), Box::new(|_| {}));
+        p.spare_vad = Some(Box::new(CachedFallback));
+        p.vad_warning_sent = true;
+        p.apply_settings(settings.clone());
+        assert_eq!(p.spare_vad.as_ref().unwrap().name(), "cached fallback");
+        // An invalid fixture still proves the load is retried: it becomes
+        // a fresh energy fallback rather than retaining the cached detector.
+        std::fs::write(path, []).unwrap();
+        p.apply_settings(settings);
+        assert_eq!(p.spare_vad.as_ref().unwrap().name(), "energy");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

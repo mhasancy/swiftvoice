@@ -368,9 +368,9 @@ pub fn language_name(code: &str) -> &str {
     LANGUAGE_NAMES.iter().find(|(c, _)| *c == code).map(|(_, n)| *n).unwrap_or(code)
 }
 
-/// "auto" or 2-3 lowercase ASCII letters.
+/// "auto" or a two-letter ISO 639-1 code, as accepted by the engines.
 pub fn is_valid_language_setting(lang: &str) -> bool {
-    lang == "auto" || ((2..=3).contains(&lang.len()) && lang.bytes().all(|b| b.is_ascii_lowercase()))
+    lang == "auto" || (lang.len() == 2 && lang.bytes().all(|b| b.is_ascii_lowercase()))
 }
 
 /// Pick the recogniser for `language`: the main model if it supports the
@@ -438,5 +438,6 @@ mod tests {
         assert!(is_valid_language_setting("bn"));
         assert!(!is_valid_language_setting("EN"));
         assert!(!is_valid_language_setting("english"));
+        assert!(!is_valid_language_setting("eng"), "Whisper and Parakeet require two-letter codes");
     }
 }

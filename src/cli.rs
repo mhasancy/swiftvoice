@@ -301,10 +301,19 @@ fn run_transcribe(
     language: Option<String>,
 ) -> Result<()> {
     let config = load_config_readonly(config_path)?;
-    let model_id = model.unwrap_or_else(|| config.asr.model.clone());
+    let language = language.unwrap_or_else(|| config.asr.language.clone());
+    if !catalog::is_valid_language_setting(&language) {
+        bail!("--language must be auto or a two-letter ISO 639-1 code (en, de, bn, ...)");
+    }
+    let model_id = match model {
+        Some(id) => {
+            catalog::route(&language, &id, &id).map_err(|e| anyhow!(e))?;
+            id
+        }
+        None => catalog::route(&language, &config.asr.model, &config.asr.fallback_model).map_err(|e| anyhow!(e))?.to_string(),
+    };
     let info = catalog::find(&model_id).with_context(|| format!("unknown model \"{model_id}\""))?;
     let models_dir = models_dir.unwrap_or_else(|| config.models_dir());
-    let language = language.unwrap_or_else(|| config.asr.language.clone());
     let lang = (language != "auto").then_some(language.as_str());
     let input = crate::audio::wav::read_wav(audio)?;
     crate::asr::runtime::set_low_memory(config.asr.low_memory);
@@ -520,7 +529,7 @@ fn run_doctor(config_path: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        println!("[info] start with Windows: {}", if crate::platform::autostart_enabled() { "on" } else { "off" });
+        println!("[info] start with Windows: {}", if crate::platform::autostart_enabled(config_path) { "on" } else { "off" });
         println!("[info] running as administrator: {}", if crate::platform::is_elevated() { "yes" } else { "no" });
     }
     if problems == 0 {
@@ -600,5 +609,23 @@ mod tests {
         assert!(p(&["--doctor", "--version"]).is_err());
         assert!(p(&["--record", "x.wav", "--seconds", "0"]).is_err());
         assert!(matches!(p(&["--transcribe", "a.wav", "--model", "m"]).unwrap().command, Command::Transcribe { .. }));
+    }
+
+    #[test]
+    fn transcribe_routes_language_and_rejects_unsupported_overrides() {
+        let dir = crate::paths::test_dir("cli_language");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[asr]\nlanguage = \"bn\"\nfallback_model = \"whisper-base\"\n").unwrap();
+        let audio = dir.join("input.wav");
+        crate::audio::wav::write_wav(&audio, &[0.0; 1600], 16_000).unwrap();
+        let err = run_transcribe(&path, &audio, None, Some(dir.join("models")), None, None).unwrap_err().to_string();
+        assert!(err.contains("whisper-base"), "the CLI must choose the configured fallback: {err}");
+        let err = run_transcribe(&path, &audio, Some("parakeet-tdt-0.6b-v3".into()), None, None, None).unwrap_err().to_string();
+        assert!(err.contains("does not support"), "unsupported explicit models must fail clearly: {err}");
+        assert!(run_transcribe(&path, &audio, None, None, None, Some("eng".into())).is_err());
+        let opts = BenchOpts { audio: Some(audio), language: Some("eng".into()), ..Default::default() };
+        let err = run_benchmark(&path, opts, Instant::now()).unwrap_err().to_string();
+        assert!(err.contains("two-letter ISO 639-1"), "benchmark overrides must use the same validation: {err}");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

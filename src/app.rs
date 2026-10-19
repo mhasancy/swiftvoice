@@ -74,6 +74,7 @@ pub struct WinUi {
     hotkeys: HotkeyRegistry,
     pending_ask: Option<(String, String)>,
     asked: HashSet<String>,
+    config_path: PathBuf,
 }
 
 impl Ui for WinUi {
@@ -116,11 +117,11 @@ impl Ui for WinUi {
     }
 
     fn set_autostart(&mut self, on: bool) -> Result<(), String> {
-        platform::set_autostart(on)
+        platform::set_autostart(on, &self.config_path)
     }
 
     fn autostart_enabled(&self) -> bool {
-        platform::autostart_enabled()
+        platform::autostart_enabled(&self.config_path)
     }
 
     fn ask_download(&mut self, model_id: &str, reason: &str) {
@@ -160,9 +161,14 @@ impl Ports for WinPorts {
         self.worker.send(msg)
     }
 
-    fn insert(&self, req: InsertRequest) -> Result<(), String> {
+    fn insert(&self, req: InsertRequest, clipboard_only: bool) -> Result<(), String> {
         let mut inserter = self.inserter.borrow_mut();
-        match inserter.send(req) {
+        let sent = if clipboard_only {
+            inserter.copy_to_clipboard(req, "Recovered text is on the clipboard; press Ctrl+V to paste it.".into())
+        } else {
+            inserter.send(req)
+        };
+        match sent {
             Ok(()) => Ok(()),
             Err(EnqueueError::Full(_)) => Err("Insertion is busy; your text is retained. Stop dictation and try again.".into()),
             Err(EnqueueError::Closed(req)) => {
@@ -625,7 +631,15 @@ pub fn run(config_path: &Path, verbose: bool, process_start: Instant) -> Result<
             None
         }
     };
-    let ui = WinUi { hwnd, tray, overlay, hotkeys: HotkeyRegistry::new(hwnd), pending_ask: None, asked: HashSet::new() };
+    let ui = WinUi {
+        hwnd,
+        tray,
+        overlay,
+        hotkeys: HotkeyRegistry::new(hwnd),
+        pending_ask: None,
+        asked: HashSet::new(),
+        config_path: config_path.to_path_buf(),
+    };
     let ports = WinPorts { audio: audio_handle, worker: worker_handle, inserter: inserter_handle, sink };
     let mut controller = Controller::new(ui, ports, cfg, config_path.to_path_buf(), vocab);
     controller.startup();
