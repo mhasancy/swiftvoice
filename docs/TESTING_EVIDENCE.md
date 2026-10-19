@@ -5,6 +5,31 @@ Executed results only, newest first. Benchmark tables are in
 [../tests/MANUAL_TESTS.md](../tests/MANUAL_TESTS.md). Results from CI are on
 the pull requests and the Actions tab.
 
+## 2026-10-20 — review fixes on Windows
+
+Run locally on Windows x64 with Rust 1.99.0 and MSVC, on
+`agents/fix-review-findings` after baseline `aa7a51e`. All 17 review findings
+were addressed. These checks use default Cargo features (Whisper disabled).
+
+| Check | Result |
+|---|---|
+| `cargo fmt --all -- --check` and `git diff --check` | Pass |
+| `cargo clippy --all-targets --locked --offline -- -D warnings` | Pass |
+| `cargo test --all-targets --locked --offline --quiet` | 175 unit tests pass. The feature-parity test and 2 model tests return early because their fixtures are absent; these 3 skips provide no inference or numerical-parity evidence |
+| Added/updated regression coverage | Forced-cut sample retention; newline commands through insertion handoff; paste grace and history exclusion; safe Smart HTTP errors; VAD fallback invalidation; cancel state; atomic hotkey reset; bounded ASR backlog; nonblocking insertion and retained clipboard recovery; cancelled acknowledgements; deferred settings; language routing/validation; autostart command |
+| Native UI Automation | A hidden window test reads shortcut instructions and an updated validation error through UI Automation. No visible dialog or screen reader was exercised |
+| `cargo build --release --locked --offline` | Pass; Windows executables linked successfully |
+| Release command-line smoke checks | EXE `--version` passes. Launcher copied as `swiftvoice.com` relays version/help output and invalid-option exit code 2. Isolated output is under `target/review-checks/smoke`; no microphone or clipboard access |
+| Targeted reviewer rechecks | Correctness, security, reliability, UX and compatibility reviewers found no remaining issue in the fixes they rechecked. These were source reviews |
+
+The suite ran with temporary files under `target/review-temp` and loopback
+access for synthetic HTTP tests. No models or runtime packages were downloaded.
+Live tray/overlay/hotkeys, microphone capture, pasting into real applications,
+clipboard history, Narrator, registry/sign-in autostart and model inference
+remain untested; use the manual checklist. Whisper-enabled compilation was
+not run because this host has no `libclang.dll`. Full release packaging was
+also not run.
+
 ## 2026-10-15 — first release (developed in mhasancy/py-labs PR #20, moved here)
 
 Run by the agent (Claude Code) on a Linux x86-64 cloud VM: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX-512 VNNI), 16 GB RAM. Rust 1.97.0. ONNX Runtime 1.31.0, Microsoft's official Linux x64 build, loaded dynamically. Scope: the platform-independent core and the real models on Linux, plus a cross-target compile check of the Windows code. Nothing ran on Windows. Paths below are relative to this repository; the crate then lived in `swiftvoice/` of mhasancy/py-labs.

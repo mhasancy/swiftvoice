@@ -50,6 +50,9 @@ inserted text, and why it is fast.
 All channels are bounded. Senders on the latency path use `try_send`. A full
 queue drops partial (preview) jobs first. For final jobs it reports an
 error for that utterance instead of blocking the audio thread.
+The recogniser also limits its retained pending work to 32 jobs and 60 seconds
+of audio. Superseded jobs and optional previews are discarded first; required
+work beyond the limit returns a visible error for that utterance.
 
 ## From sound to text
 
@@ -228,15 +231,24 @@ The default `method = "auto"`:
   one-line summary of its audio in the log, so a strange transcription can
   be checked against what the microphone actually delivered.
 - **A stuck insertion queue.** Dictated text reaches the inserter thread
-  through a bounded queue; if the queue stays full (or the thread has
-  exited) the text is copied to the clipboard and the overlay flashes
-  amber, instead of being dropped with only a log line.
+  through a nonblocking bounded queue, one request at a time. The controller
+  retains each output until the worker acknowledges it after the paste grace
+  period and clipboard restore. A full queue retains the text for retry;
+  an exited worker is restarted and recovers through a clipboard-only request
+  on that worker. A backlog of 32 utterances stops new dictation until it drains.
+  Failed output stays in memory; pressing the dictation shortcut deliberately
+  retries it through the clipboard, avoiding duplicate synthetic typing.
+  Clipboard fallbacks pause draining until another deliberate shortcut press,
+  so subsequent utterances cannot overwrite text awaiting manual paste.
 - **Sleep/resume and screen lock.** Listening stops on sleep and on lock.
   On resume the device is released and the hotkeys re-registered.
 - **Explorer restart.** The tray icon is re-added on `TaskbarCreated`.
 - **Settings edited by hand** are picked up within 1 s. Invalid values are
   reported together, and the previous settings stay in effect. Tray
-  changes rewrite single keys with `toml_edit`, preserving your comments.
+  changes use `toml_edit`, preserving your comments; hotkey resets validate and
+  save all shortcuts together. Model/runtime changes wait until current
+  dictation has finished and its output has been acknowledged. Installing
+  Silero retries its cached energy fallback after the active capture ends.
 - **Single instance.** A named mutex makes a second launch explain where
   the icon is.
 - **Crash safety.** The log is flushed per line and rotated at 5 MB (3

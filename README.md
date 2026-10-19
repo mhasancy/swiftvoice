@@ -67,6 +67,11 @@ The zip contains:
 Nothing is installed system wide. To remove SwiftVoice, quit it and delete the folder, plus
 `%APPDATA%\SwiftVoice` and `%LOCALAPPDATA%\SwiftVoice`.
 
+In PowerShell, run `.\swiftvoice.com models list` or `.\swiftvoice.com --doctor`
+from the extracted folder. To use the bare `swiftvoice` commands shown below,
+add that folder to your user `PATH` and open a new terminal; PowerShell does not
+search the current folder automatically.
+
 ### Build from source
 
 Requirements:

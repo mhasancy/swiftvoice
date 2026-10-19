@@ -99,7 +99,7 @@ shortcut is checked against other programs before it is saved.
 | Key | Default | Range | Meaning |
 |---|---|---|---|
 | `model` | `"parakeet-tdt-0.6b-v3"` | an id from `swiftvoice models list` | main recogniser |
-| `language` | `"auto"` | `auto` or ISO 639-1/-3 (`en`, `de`, `bn`, …) | `auto` uses the main model's own language detection; a language the main model lacks is routed to `fallback_model` |
+| `language` | `"auto"` | `auto` or two-letter ISO 639-1 (`en`, `de`, `bn`, …) | `auto` uses the main model's own language detection; a language the main model lacks is routed to `fallback_model`. Three-letter codes such as `eng` are rejected; use `en` instead. |
 | `fallback_model` | `"whisper-large-v3-turbo-q5_0"` | a Whisper id | used for languages Parakeet does not support (e.g. Bengali) |
 | `threads` | `0` | 0 … 64 | inference threads; 0 = automatic (one per physical core) |
 | `low_memory` | `true` | bool | skip ONNX Runtime weight pre-packing for large models: about 250 MB less RAM for the 0.6B models, 10-15 % slower transcription (docs/BENCHMARKS.md) |

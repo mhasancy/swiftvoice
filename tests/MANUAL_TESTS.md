@@ -63,6 +63,9 @@ timings.
 | C9 | Say "first line new line second line new paragraph open bracket aside close bracket" | `First line⏎Second line⏎⏎(Aside)` in Clean mode (unit test `voice_commands_give_structure_in_clean_mode`). |
 | C10 | Mode Raw | Exact model output, no filler removal or vocabulary. |
 | C11 | Click an empty spot on the desktop, or the taskbar; or click an icon in a folder in File Explorer; or click the surrounding page/chat area of an app like a browser or opencode so no text field has the cursor; dictate | Nothing is typed; the dot flashes amber and the dictated text replaces the previous clipboard content (it is not restored). Ctrl+V in any app pastes the sentence. A game with no text field still receives typed text when its exe is listed in `insertion.type_apps`, and `insertion.method = "paste"` forces a paste everywhere. |
+| C12 | Dictate "new paragraph" alone, then "hello new line", in Clean and Smart modes | A blank paragraph is inserted for the first command; the second ends with a newline. |
+| C13 | Generate two Smart results that complete out of order while the target is busy | Both appear once and in order; clipboard replacement waits for each paste grace period. Repeat with `restore_clipboard = false`. |
+| C14 | Dictate over the desktop or an elevated target, then inspect Win+V | Manual Ctrl+V works, but dictated text is absent from history. |
 
 ## D. Audio and devices
 
@@ -87,6 +90,17 @@ timings.
 | E4 | Smart mode without Ollama running | The Clean text is inserted; one notification "Smart mode unavailable, inserted the Clean text: …" names the connection error. |
 | E5 | Smart mode with Ollama (`ollama run llama3.2:3b`) | Rewritten text within `timeout_ms`; Wireshark/Resource Monitor shows connections only to 127.0.0.1. |
 | E6 | Set `smart.endpoint = "http://example.com"` in `config.toml` | "Settings not applied" notification: the endpoint must be a loopback address. The previous settings stay in effect. |
+| E7 | Start without Silero, install it from the tray, then dictate again | The next capture's log identifies Silero VAD; no restart is needed. |
+| E8 | Change the models folder during a dictation | Current dictation completes using the original folder; new dictation waits until those settings can be applied. |
+| E9 | With Bengali configured, run `.\swiftvoice.com --transcribe sample.wav` | The configured Whisper fallback is selected. An explicit incompatible Parakeet override reports an unsupported-language error. |
+
+Additional Windows regression checks: during continuous dictation, open and
+cancel the shortcut dialog, then press Escape; dictation must still cancel.
+Use Narrator to read the dialog's instructions, current combination, and
+validation error. Test hotkey reset with push-to-talk `Ctrl+Alt+Q`, toggle
+`Ctrl+Alt+Space`, and cancel `Ctrl+Alt+V`; all three shortcuts reset together.
+Start with `--config` pointing to a file outside the default folder, enable
+autostart, and sign in again; the same file must remain active.
 
 ## F. Performance (record numbers in docs/BENCHMARKS.md)
 
